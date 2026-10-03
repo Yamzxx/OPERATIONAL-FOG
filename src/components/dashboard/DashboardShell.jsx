@@ -8,7 +8,10 @@ import { TrainingSessions } from './TrainingSessions';
 import { TrainingRoom } from './TrainingRoom';
 import { AfterActionReview } from './AfterActionReview';
 import { SettingsView } from './SettingsView';
+import { CreateMultiplayerModal } from './CreateMultiplayerModal';
+import { JoinSessionModal } from './JoinSessionModal';
 import { storageService } from '../../services/storageService';
+import { multiplayerEngine } from '../../services/multiplayerEngine';
 
 export const DashboardShell = ({ 
   currentUser, 
@@ -30,15 +33,36 @@ export const DashboardShell = ({
   const [activeScenario, setActiveScenario] = useState(null);
   const [scenarioToEdit, setScenarioToEdit] = useState(null);
 
-  // Load persistent data on mount
+  const [isCreateMultiplayerOpen, setIsCreateMultiplayerOpen] = useState(false);
+  const [isJoinSessionOpen, setIsJoinSessionOpen] = useState(false);
+
+  // Load persistent data & subscribe to real-time multiplayer engine
   useEffect(() => {
-    setScenarios(storageService.getScenarios());
-    setSessions(storageService.getSessions());
-    setAARS(storageService.getAARs());
+    const refreshData = () => {
+      setScenarios(storageService.getScenarios());
+      const localSess = storageService.getSessions();
+      const mpSess = multiplayerEngine.getSessions();
+      
+      // Combine sessions
+      const combined = [...mpSess, ...localSess.filter(ls => !mpSess.some(ms => ms.id === ls.id))];
+      setSessions(combined);
+      setAARS(storageService.getAARs());
+    };
+
+    refreshData();
+
+    // Subscribe to multiplayer real-time broadcasts
+    const unsubscribeMP = multiplayerEngine.subscribe((event) => {
+      refreshData();
+    });
+
+    return () => {
+      unsubscribeMP();
+    };
   }, []);
 
   const handleStartScenario = (scenario) => {
-    // Create new session
+    // Create new single-user session
     const newSess = storageService.createSession({
       name: `${scenario.title.split('—')[1] || scenario.title} Exercise`,
       scenarioId: scenario.id,
@@ -49,6 +73,21 @@ export const DashboardShell = ({
     setSessions(storageService.getSessions());
     setActiveTrainingSession(newSess);
     setActiveScenario(scenario);
+    setActiveView('training-room');
+  };
+
+  const handleMultiplayerSessionCreated = (mpSession) => {
+    setSessions(multiplayerEngine.getSessions());
+    setActiveTrainingSession(mpSession);
+    setActiveScenario(mpSession.scenario || scenarios[0]);
+    setActiveView('training-room');
+  };
+
+  const handleJoinedSession = (joinedSession) => {
+    setSessions(multiplayerEngine.getSessions());
+    setActiveTrainingSession(joinedSession);
+    const scen = scenarios.find(s => s.id === joinedSession.scenarioId) || joinedSession.scenario || scenarios[0];
+    setActiveScenario(scen);
     setActiveView('training-room');
   };
 
@@ -64,20 +103,26 @@ export const DashboardShell = ({
 
   const handleEndExercise = (session, decisions, durationMinutes) => {
     // Update session status
-    storageService.updateSessionStatus(session.id, 'Completed');
-    setSessions(storageService.getSessions());
+    if (session.sessionCode) {
+      multiplayerEngine.endExercise(session.sessionCode);
+    } else {
+      storageService.updateSessionStatus(session.id, 'Completed');
+    }
+    
+    setSessions(multiplayerEngine.getSessions());
 
     // Save AAR record
     const newAAR = storageService.saveAAR({
       sessionId: session.id,
       sessionName: session.name,
       scenarioTitle: session.scenarioTitle,
-      creator: session.creator,
+      creator: session.creator || currentUser?.serviceId,
       startTime: session.createdAt,
       endTime: new Date().toISOString(),
       durationMinutes,
       decisionsCount: decisions.length,
-      decisions
+      decisions,
+      participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
     });
 
     setAARS(storageService.getAARs());
@@ -93,7 +138,7 @@ export const DashboardShell = ({
 
   const getPageTitle = () => {
     switch (activeView) {
-      case 'overview': return 'Training Overview Dashboard';
+      case 'overview': return 'Training Overview & Multiplayer Hub';
       case 'scenarios': return 'Fictional Scenario Library';
       case 'scen-config': return 'Scenario Configuration Editor';
       case 'sessions': return 'Training Exercise Sessions';
@@ -139,6 +184,8 @@ export const DashboardShell = ({
                 setScenarioToEdit(null);
                 setActiveView('scen-config');
               }}
+              onOpenCreateMultiplayer={() => setIsCreateMultiplayerOpen(true)}
+              onOpenJoinSession={() => setIsJoinSessionOpen(true)}
             />
           )}
 
@@ -169,7 +216,7 @@ export const DashboardShell = ({
               scenarios={scenarios}
               onStartNewSession={handleStartScenario}
               onOpenTrainingRoom={(sess) => {
-                const scen = scenarios.find(s => s.id === sess.scenarioId) || scenarios[0];
+                const scen = scenarios.find(s => s.id === sess.scenarioId) || sess.scenario || scenarios[0];
                 setActiveTrainingSession(sess);
                 setActiveScenario(scen);
                 setActiveView('training-room');
@@ -185,7 +232,7 @@ export const DashboardShell = ({
               currentUser={currentUser}
               onSaveDecision={handleSaveDecision}
               onEndExercise={handleEndExercise}
-              existingDecisions={storageService.getDecisionsForSession(activeTrainingSession.id)}
+              existingDecisions={activeTrainingSession.decisions || storageService.getDecisionsForSession(activeTrainingSession.id)}
             />
           )}
 
@@ -209,6 +256,22 @@ export const DashboardShell = ({
           )}
         </main>
       </div>
+
+      {/* Multiplayer Modals */}
+      <CreateMultiplayerModal 
+        isOpen={isCreateMultiplayerOpen}
+        onClose={() => setIsCreateMultiplayerOpen(false)}
+        scenarios={scenarios}
+        currentUser={currentUser}
+        onSessionCreated={handleMultiplayerSessionCreated}
+      />
+
+      <JoinSessionModal 
+        isOpen={isJoinSessionOpen}
+        onClose={() => setIsJoinSessionOpen(false)}
+        currentUser={currentUser}
+        onJoinedSession={handleJoinedSession}
+      />
     </div>
   );
 };

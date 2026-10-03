@@ -4,10 +4,8 @@ import {
   PlusCircle, 
   PlayCircle, 
   FileCheck, 
-  Layers, 
-  CheckCircle, 
-  Clock, 
-  AlertTriangle,
+  Users, 
+  LogIn, 
   ArrowRight,
   ShieldCheck
 } from 'lucide-react';
@@ -17,9 +15,11 @@ export const OverviewDashboard = ({
   sessions, 
   aars, 
   onNavigate,
-  onOpenCreateScenario
+  onOpenCreateScenario,
+  onOpenCreateMultiplayer,
+  onOpenJoinSession
 }) => {
-  const activeSessions = sessions.filter(s => s.status === 'In Progress');
+  const activeSessions = sessions.filter(s => s.status === 'In Progress' || s.status === 'Waiting');
   const completedSessions = sessions.filter(s => s.status === 'Completed');
 
   return (
@@ -40,10 +40,10 @@ export const OverviewDashboard = ({
               AUTHENTICATED WORKSPACE CONSOLE
             </span>
             <h1 style={{ fontFamily: 'var(--font-family-serif)', fontSize: '26px', fontWeight: '800', color: 'var(--color-primary-navy)', margin: '4px 0 6px' }}>
-              Training Overview
+              Training Overview & Multiplayer Hub
             </h1>
             <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', maxWidth: '780px' }}>
-              Manage exercises, practise coordination, and review decisions under communication uncertainty.
+              Manage multi-participant exercises, coordinate team dispatches, and review decisions under communication uncertainty.
             </p>
           </div>
 
@@ -58,34 +58,34 @@ export const OverviewDashboard = ({
       {/* Quick Actions Bar */}
       <div>
         <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '12px' }}>
-          Quick Actions
+          Quick Actions & Multiplayer Controls
         </h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
           <button 
-            onClick={() => onNavigate('scenarios')}
+            onClick={onOpenCreateMultiplayer}
+            className="gov-btn"
+            style={{ backgroundColor: 'var(--color-primary-navy)', color: '#FFFFFF', justifyContent: 'flex-start', padding: '14px 18px' }}
+          >
+            <Users size={18} style={{ color: 'var(--color-gold-accent)' }} />
+            <span>Create Multiplayer Session</span>
+          </button>
+
+          <button 
+            onClick={onOpenJoinSession}
             className="gov-btn"
             style={{ backgroundColor: '#FFFFFF', color: 'var(--color-primary-navy)', border: '1px solid #CBD5E1', justifyContent: 'flex-start', padding: '14px 18px' }}
           >
-            <BookOpen size={18} style={{ color: 'var(--color-terracotta)' }} />
-            <span>Browse Scenarios</span>
+            <LogIn size={18} style={{ color: 'var(--color-terracotta)' }} />
+            <span>Join Session via Code</span>
           </button>
 
           <button 
             onClick={onOpenCreateScenario}
             className="gov-btn"
-            style={{ backgroundColor: 'var(--color-primary-navy)', color: '#FFFFFF', justifyContent: 'flex-start', padding: '14px 18px' }}
-          >
-            <PlusCircle size={18} style={{ color: 'var(--color-gold-accent)' }} />
-            <span>Create Scenario Draft</span>
-          </button>
-
-          <button 
-            onClick={() => onNavigate('sessions')}
-            className="gov-btn"
             style={{ backgroundColor: '#FFFFFF', color: 'var(--color-primary-navy)', border: '1px solid #CBD5E1', justifyContent: 'flex-start', padding: '14px 18px' }}
           >
-            <PlayCircle size={18} style={{ color: '#0284C7' }} />
-            <span>View Training Sessions</span>
+            <PlusCircle size={18} style={{ color: '#0284C7' }} />
+            <span>Create Scenario Draft</span>
           </button>
 
           <button 
@@ -106,7 +106,7 @@ export const OverviewDashboard = ({
             Training Metrics & Summary
           </h3>
           <span style={{ fontSize: '11px', color: '#64748B' }}>
-            Local Storage Records & Demo Data
+            Real-Time Synchronization Layer Active
           </span>
         </div>
 
@@ -117,16 +117,16 @@ export const OverviewDashboard = ({
             <div style={{ fontSize: '28px', fontWeight: '800', color: 'var(--color-primary-navy)', margin: '4px 0' }}>
               {scenarios.length}
             </div>
-            <div style={{ fontSize: '11px', color: '#0369A1', fontWeight: '600' }}>3 Fictional Standard Templates</div>
+            <div style={{ fontSize: '11px', color: '#0369A1', fontWeight: '600' }}>Fictional Standard Templates</div>
           </div>
 
           {/* Card 2: Active Sessions */}
           <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid #F59E0B', padding: '18px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748B' }}>ACTIVE SESSIONS</div>
+            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748B' }}>ACTIVE MULTIPLAYER SESSIONS</div>
             <div style={{ fontSize: '28px', fontWeight: '800', color: '#B45309', margin: '4px 0' }}>
               {activeSessions.length}
             </div>
-            <div style={{ fontSize: '11px', color: '#B45309', fontWeight: '600' }}>Single-Participant Workspaces</div>
+            <div style={{ fontSize: '11px', color: '#B45309', fontWeight: '600' }}>Multi-Participant Workspaces</div>
           </div>
 
           {/* Card 3: Completed Exercises */}
@@ -135,7 +135,7 @@ export const OverviewDashboard = ({
             <div style={{ fontSize: '28px', fontWeight: '800', color: '#15803D', margin: '4px 0' }}>
               {completedSessions.length}
             </div>
-            <div style={{ fontSize: '11px', color: '#15803D', fontWeight: '600' }}>Recorded Local Log Entries</div>
+            <div style={{ fontSize: '11px', color: '#15803D', fontWeight: '600' }}>Recorded Audit Logs</div>
           </div>
 
           {/* Card 4: Pending Reviews */}
@@ -144,7 +144,7 @@ export const OverviewDashboard = ({
             <div style={{ fontSize: '28px', fontWeight: '800', color: 'var(--color-terracotta)', margin: '4px 0' }}>
               {aars.length}
             </div>
-            <div style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: '600' }}>Ready for Instructor Observations</div>
+            <div style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: '600' }}>Ready for Debrief</div>
           </div>
         </div>
       </div>
@@ -166,14 +166,14 @@ export const OverviewDashboard = ({
 
         {sessions.length === 0 ? (
           <div style={{ padding: '32px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
-            No exercise activity records found. Select a scenario from the library to launch a training session.
+            No exercise activity records found. Create or join a multiplayer session to start.
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1', textAlign: 'left' }}>
                 <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Exercise Name</th>
-                <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Scenario</th>
+                <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Join Code</th>
                 <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Status</th>
                 <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Date</th>
                 <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)', textAlign: 'right' }}>Action</th>
@@ -186,7 +186,9 @@ export const OverviewDashboard = ({
                     {sess.name}
                     {sess.isSample && <span style={{ marginLeft: '6px', fontSize: '10px', background: '#E2E8F0', color: '#475569', padding: '1px 4px' }}>SAMPLE</span>}
                   </td>
-                  <td style={{ padding: '12px', color: '#475569' }}>{sess.scenarioTitle}</td>
+                  <td style={{ padding: '12px', fontFamily: 'monospace', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                    {sess.sessionCode || 'SINGLE-NODE'}
+                  </td>
                   <td style={{ padding: '12px' }}>
                     <span 
                       style={{
@@ -194,8 +196,8 @@ export const OverviewDashboard = ({
                         fontWeight: '700',
                         padding: '2px 8px',
                         borderRadius: '2px',
-                        backgroundColor: sess.status === 'Completed' ? '#DCFCE7' : '#FEF3C7',
-                        color: sess.status === 'Completed' ? '#15803D' : '#B45309'
+                        backgroundColor: sess.status === 'Completed' ? '#DCFCE7' : sess.status === 'In Progress' ? '#FEF3C7' : '#E0F2FE',
+                        color: sess.status === 'Completed' ? '#15803D' : sess.status === 'In Progress' ? '#B45309' : '#0369A1'
                       }}
                     >
                       {sess.status}
@@ -225,39 +227,6 @@ export const OverviewDashboard = ({
             </tbody>
           </table>
         )}
-      </div>
-
-      {/* Getting Started Step Workflow */}
-      <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', borderTop: '3px solid var(--color-terracotta)', padding: '20px' }}>
-        <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '14px' }}>
-          Getting Started — Exercise Workflow
-        </h3>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-          <div style={{ background: '#FFF', padding: '14px', border: '1px solid #E2E8F0' }}>
-            <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-terracotta)' }}>STEP 1</div>
-            <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '4px 0' }}>Select a Scenario</div>
-            <div style={{ fontSize: '12px', color: '#64748B' }}>Choose from fictional templates or create a draft.</div>
-          </div>
-
-          <div style={{ background: '#FFF', padding: '14px', border: '1px solid #E2E8F0' }}>
-            <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-terracotta)' }}>STEP 2</div>
-            <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '4px 0' }}>Configure Events</div>
-            <div style={{ fontSize: '12px', color: '#64748B' }}>Review RF latency curves and delay vectors.</div>
-          </div>
-
-          <div style={{ background: '#FFF', padding: '14px', border: '1px solid #E2E8F0' }}>
-            <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-terracotta)' }}>STEP 3</div>
-            <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '4px 0' }}>Run Training Exercise</div>
-            <div style={{ fontSize: '12px', color: '#64748B' }}>Enter the Training Room & record command rationale.</div>
-          </div>
-
-          <div style={{ background: '#FFF', padding: '14px', border: '1px solid #E2E8F0' }}>
-            <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-terracotta)' }}>STEP 4</div>
-            <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '4px 0' }}>Review Results</div>
-            <div style={{ fontSize: '12px', color: '#64748B' }}>Inspect timelines & instructor notes in AAR.</div>
-          </div>
-        </div>
       </div>
     </div>
   );

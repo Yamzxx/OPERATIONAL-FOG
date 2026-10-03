@@ -15,9 +15,12 @@ import {
   X,
   Layers,
   HelpCircle,
-  MessageSquare
+  MessageSquare,
+  Users
 } from 'lucide-react';
 import { EventEngine, DELIVERY_STATUS, formatSecondsToMMSS } from '../../services/eventEngine';
+import { multiplayerEngine } from '../../services/multiplayerEngine';
+import { TeamCoordinationPanel } from './TeamCoordinationPanel';
 
 export const TrainingRoom = ({ 
   session, 
@@ -44,8 +47,30 @@ export const TrainingRoom = ({
   const [confidence, setConfidence] = useState('Medium');
   const [showEndModal, setShowEndModal] = useState(false);
   const [decisions, setDecisions] = useState(existingDecisions);
+  const [liveSession, setLiveSession] = useState(session);
 
   const engineRef = useRef(null);
+
+  // Subscribe to real-time multiplayer updates
+  useEffect(() => {
+    setLiveSession(session);
+
+    const unsubscribeMP = multiplayerEngine.subscribe((event) => {
+      if (session?.sessionCode) {
+        const updated = multiplayerEngine.getSessionByCode(session.sessionCode);
+        if (updated) {
+          setLiveSession({ ...updated });
+          if (updated.decisions) {
+            setDecisions([...updated.decisions]);
+          }
+        }
+      }
+    });
+
+    return () => {
+      unsubscribeMP();
+    };
+  }, [session]);
 
   // Instantiate EventEngine on mount
   useEffect(() => {
@@ -77,8 +102,14 @@ export const TrainingRoom = ({
     if (!engineRef.current) return;
     if (engineState.isPaused) {
       engineRef.current.resume();
+      if (session?.sessionCode) {
+        multiplayerEngine.setPauseState(session.sessionCode, false);
+      }
     } else {
       engineRef.current.pause();
+      if (session?.sessionCode) {
+        multiplayerEngine.setPauseState(session.sessionCode, true);
+      }
     }
   };
 
@@ -99,13 +130,31 @@ export const TrainingRoom = ({
       confidence,
       timestamp: new Date().toISOString(),
       elapsedMinutes: Math.floor(engineState.elapsedSeconds / 60),
-      elapsedTimeFormatted: engineState.elapsedFormatted
+      elapsedTimeFormatted: engineState.elapsedFormatted,
+      submittedBy: currentUser?.serviceId || 'Operator',
+      submittedRole: currentUser?.role || 'commander'
     };
 
-    onSaveDecision(session.id, newDecision);
-    setDecisions([...decisions, newDecision]);
+    if (session?.sessionCode) {
+      multiplayerEngine.submitDecision(session.sessionCode, newDecision);
+    } else {
+      onSaveDecision(session.id, newDecision);
+      setDecisions([...decisions, newDecision]);
+    }
+
     setDecisionTitle('');
     setRationale('');
+  };
+
+  const handleSendTeamMessage = (text) => {
+    if (session?.sessionCode) {
+      multiplayerEngine.sendTeamMessage(session.sessionCode, {
+        senderId: currentUser?.serviceId || 'Operator',
+        senderName: currentUser?.serviceId || 'Operator',
+        senderRole: currentUser?.role || 'commander',
+        text
+      });
+    }
   };
 
   // Get participant visible messages
@@ -134,11 +183,16 @@ export const TrainingRoom = ({
             <Radio size={20} />
           </div>
           <div>
-            <div style={{ fontSize: '10px', color: 'var(--color-gold-accent)', fontWeight: 'bold' }}>
-              DETERMINISTIC SIMULATION ENGINE ACTIVE • {scenario?.code || 'SCEN-101'}
+            <div style={{ fontSize: '10px', color: 'var(--color-gold-accent)', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>DETERMINISTIC SIMULATION ENGINE ACTIVE</span>
+              {liveSession?.sessionCode && (
+                <span style={{ background: 'var(--color-primary-navy)', color: '#FFF', padding: '1px 6px', borderRadius: '2px', fontFamily: 'monospace' }}>
+                  JOIN CODE: {liveSession.sessionCode}
+                </span>
+              )}
             </div>
             <div style={{ fontFamily: 'var(--font-family-serif)', fontSize: '18px', fontWeight: 'bold' }}>
-              {session.name}
+              {liveSession?.name || session.name}
             </div>
           </div>
         </div>
@@ -272,7 +326,7 @@ export const TrainingRoom = ({
                   Delivered Intelligence Dispatches ({participantMessages.length})
                 </h3>
                 <span style={{ fontSize: '11px', color: '#15803D', fontWeight: 'bold', background: '#DCFCE7', padding: '2px 6px' }}>
-                  FILTERED PARTICIPANT FEED
+                  ROLE FEED: {userRole.toUpperCase()}
                 </span>
               </div>
 
@@ -316,8 +370,16 @@ export const TrainingRoom = ({
             </div>
           </div>
 
-          {/* Right Panel: Decision Console */}
+          {/* Right Panel: Team Coordination & Decision Console */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Real-time Team Coordination Panel */}
+            <TeamCoordinationPanel 
+              session={liveSession}
+              currentUser={currentUser}
+              onSendTeamMessage={handleSendTeamMessage}
+            />
+
+            {/* Decision Form */}
             <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid var(--color-terracotta)', padding: '20px' }}>
               <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '4px' }}>
                 Decision & Command Rationale Console
@@ -399,6 +461,10 @@ export const TrainingRoom = ({
                       </div>
                       <div style={{ fontSize: '12px', color: '#334155', marginTop: '4px', lineHeight: '1.4' }}>
                         {d.rationale}
+                      </div>
+                      <div style={{ fontSize: '10px', color: '#64748B', marginTop: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>By: {d.submittedBy || 'Operator'} ({d.submittedRole || 'Commander'})</span>
+                        <span>Confidence: {d.confidence}</span>
                       </div>
                     </div>
                   ))}
@@ -502,6 +568,9 @@ export const TrainingRoom = ({
                   style={{ backgroundColor: '#DC2626', color: '#FFF' }}
                   onClick={() => {
                     setShowEndModal(false);
+                    if (session?.sessionCode) {
+                      multiplayerEngine.endExercise(session.sessionCode);
+                    }
                     onEndExercise(session, decisions, Math.floor(engineState.elapsedSeconds / 60));
                   }}
                 >
