@@ -12,6 +12,7 @@ import { Footer } from './components/Footer';
 import { SignInModal } from './components/SignInModal';
 import { ModuleDetailModal } from './components/ModuleDetailModal';
 import { WhitepaperModal } from './components/WhitepaperModal';
+import { DashboardShell } from './components/dashboard/DashboardShell';
 
 export function App() {
   const [fontScale, setFontScale] = useState('md');
@@ -41,7 +42,7 @@ export function App() {
 
   const handleSignInSuccess = (user) => {
     setCurrentUser(user);
-    // Modal remains open to display the Authenticated Dashboard Preview
+    setIsSignInOpen(false); // Close sign in modal and enter authenticated dashboard shell
   };
 
   const handleSignOut = () => {
@@ -54,7 +55,7 @@ export function App() {
     if (!currentUser) {
       setIsSignInOpen(true);
     } else {
-      alert(`Launching ${module.title} Sandbox Environment for ${currentUser.serviceId}...`);
+      // User is already signed in, enter authenticated dashboard
     }
   };
 
@@ -68,6 +69,23 @@ export function App() {
     }
   };
 
+  // If user is signed in, render the Authenticated Main Application Dashboard Shell
+  if (currentUser) {
+    return (
+      <div className={`app-wrapper font-scale-${fontScale}`}>
+        <DashboardShell 
+          currentUser={currentUser}
+          onSignOut={handleSignOut}
+          fontScale={fontScale}
+          setFontScale={setFontScale}
+          highContrast={highContrast}
+          setHighContrast={setHighContrast}
+        />
+      </div>
+    );
+  }
+
+  // Public Government-Style Landing Page
   return (
     <div className={`app-wrapper font-scale-${fontScale}`}>
       {/* Top Government Utility Bar */}
