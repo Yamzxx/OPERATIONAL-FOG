@@ -248,20 +248,28 @@ button {
   gap: 6px;
   padding: 12px 18px;
   color: #FFFFFF;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 14px;
-  border-right: 1px solid rgba(255, 255, 255, 0.15);
-  transition: background-color 0.15s ease;
+  border-right: 1px solid rgba(255, 255, 255, 0.25);
+  transition: background-color 0.15s ease, color 0.15s ease;
   white-space: nowrap;
+  background-color: transparent;
+  letter-spacing: 0.2px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
-.gov-nav-link:hover, .gov-nav-link.active {
-  background-color: var(--color-terracotta-dark);
+.gov-nav-link:hover {
+  background-color: rgba(255, 255, 255, 0.2);
   color: #FFFFFF;
   text-decoration: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .gov-nav-link.active {
+  background-color: var(--color-terracotta-dark);
+  color: #FFFFFF;
+  text-shadow: none;
+  font-weight: 800;
   box-shadow: inset 0 -3px 0 var(--color-gold-accent);
 }
 
@@ -269,11 +277,13 @@ button {
   background-color: var(--color-primary-navy);
   color: #FFFFFF !important;
   font-weight: 700;
+  text-shadow: none;
 }
 
 .gov-nav-signin-btn:hover {
   background-color: var(--color-primary-navy-hover) !important;
 }
+
 
 /* Hero Banner */
 .gov-hero-banner {
