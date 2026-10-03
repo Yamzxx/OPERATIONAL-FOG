@@ -3,11 +3,11 @@ import { Sidebar } from './Sidebar';
 import { TopNav } from './TopNav';
 import { OverviewDashboard } from './OverviewDashboard';
 import { ScenarioLibrary } from './ScenarioLibrary';
+import { ScenarioConfig } from './ScenarioConfig';
 import { TrainingSessions } from './TrainingSessions';
 import { TrainingRoom } from './TrainingRoom';
 import { AfterActionReview } from './AfterActionReview';
 import { SettingsView } from './SettingsView';
-import { CreateScenarioModal } from './CreateScenarioModal';
 import { storageService } from '../../services/storageService';
 
 export const DashboardShell = ({ 
@@ -18,7 +18,7 @@ export const DashboardShell = ({
   highContrast,
   setHighContrast
 }) => {
-  const [activeView, setActiveView] = useState('overview');
+  const [activeView, setActiveView] = useState('overview'); // overview | scenarios | scen-config | sessions | training-room | aar | settings
   const [collapsed, setCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -28,8 +28,7 @@ export const DashboardShell = ({
   const [aars, setAARS] = useState([]);
   const [activeTrainingSession, setActiveTrainingSession] = useState(null);
   const [activeScenario, setActiveScenario] = useState(null);
-
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [scenarioToEdit, setScenarioToEdit] = useState(null);
 
   // Load persistent data on mount
   useEffect(() => {
@@ -53,9 +52,10 @@ export const DashboardShell = ({
     setActiveView('training-room');
   };
 
-  const handleSaveScenarioDraft = (newScenario) => {
+  const handleSaveScenarioConfig = (newScenario) => {
     const updated = storageService.saveScenario(newScenario);
     setScenarios(updated);
+    setActiveView('scenarios');
   };
 
   const handleSaveDecision = (sessionId, decisionData) => {
@@ -95,6 +95,7 @@ export const DashboardShell = ({
     switch (activeView) {
       case 'overview': return 'Training Overview Dashboard';
       case 'scenarios': return 'Fictional Scenario Library';
+      case 'scen-config': return 'Scenario Configuration Editor';
       case 'sessions': return 'Training Exercise Sessions';
       case 'training-room': return 'Active Exercise Training Room';
       case 'aar': return 'After-Action Reviews (AAR)';
@@ -134,7 +135,10 @@ export const DashboardShell = ({
               sessions={sessions}
               aars={aars}
               onNavigate={(view) => setActiveView(view)}
-              onOpenCreateScenario={() => setIsCreateModalOpen(true)}
+              onOpenCreateScenario={() => {
+                setScenarioToEdit(null);
+                setActiveView('scen-config');
+              }}
             />
           )}
 
@@ -143,7 +147,19 @@ export const DashboardShell = ({
               scenarios={scenarios}
               searchQuery={searchQuery}
               onStartScenario={handleStartScenario}
-              onOpenCreateModal={() => setIsCreateModalOpen(true)}
+              onOpenCreateModal={() => {
+                setScenarioToEdit(null);
+                setActiveView('scen-config');
+              }}
+            />
+          )}
+
+          {activeView === 'scen-config' && (
+            <ScenarioConfig 
+              scenarioToEdit={scenarioToEdit}
+              onSaveScenario={handleSaveScenarioConfig}
+              onCancel={() => setActiveView('scenarios')}
+              onStartExercise={handleStartScenario}
             />
           )}
 
@@ -193,13 +209,6 @@ export const DashboardShell = ({
           )}
         </main>
       </div>
-
-      {/* Create Scenario Modal */}
-      <CreateScenarioModal 
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        onSaveScenario={handleSaveScenarioDraft}
-      />
     </div>
   );
 };

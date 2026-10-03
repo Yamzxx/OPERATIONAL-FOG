@@ -8,9 +8,12 @@ import {
   Save, 
   Download, 
   CheckCircle,
+  AlertTriangle,
   FileText,
-  AlertCircle
+  AlertCircle,
+  Info
 } from 'lucide-react';
+import { formatSecondsToMMSS } from '../../services/eventEngine';
 
 export const AfterActionReview = ({ 
   aars, 
@@ -25,7 +28,7 @@ export const AfterActionReview = ({
 
   const filteredAARs = aars.filter(aar => {
     if (scenarioFilter === 'ALL') return true;
-    return aar.scenarioTitle.toUpperCase().includes(scenarioFilter);
+    return aar.scenarioTitle?.toUpperCase().includes(scenarioFilter);
   });
 
   const handleSaveNote = () => {
@@ -40,10 +43,10 @@ export const AfterActionReview = ({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-family-serif)', fontSize: '24px', fontWeight: '800', color: 'var(--color-primary-navy)' }}>
-            After-Action Review (AAR)
+            After-Action Review (AAR) & Telemetry Audit
           </h1>
           <p style={{ fontSize: '13px', color: '#64748B', marginTop: '4px' }}>
-            Timeline reconstruction, recorded command rationales, and instructor qualitative observations.
+            Scheduled vs actual delivery timelines, dropped dispatches, participant command rationales, and debrief notes.
           </p>
         </div>
 
@@ -135,12 +138,12 @@ export const AfterActionReview = ({
 
         {/* Right Side: Selected AAR Details */}
         {selectedAAR ? (
-          <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid var(--color-primary-navy)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* AAR Top Meta Header */}
+          <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid var(--color-primary-navy)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* Top Meta Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px' }}>
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: 'bold' }}>
-                  AAR RECORD REF: {selectedAAR.id} {selectedAAR.isSample ? '(SAMPLE DEMO RECORD)' : '(ACTUAL EXERCISE LOG)'}
+                  AAR RECORD REF: {selectedAAR.id} {selectedAAR.isSample ? '(SAMPLE DEMO RECORD)' : '(ACTUAL EXERCISE RECORD)'}
                 </div>
                 <h2 style={{ fontFamily: 'var(--font-family-serif)', fontSize: '20px', fontWeight: '800', color: 'var(--color-primary-navy)', margin: '2px 0 4px' }}>
                   {selectedAAR.sessionName}
@@ -150,16 +153,39 @@ export const AfterActionReview = ({
                 </div>
               </div>
 
-              <div style={{ textAlignment: 'right', fontSize: '12px', color: '#64748B' }}>
+              <div style={{ textAlign: 'right', fontSize: '12px', color: '#64748B' }}>
                 <div>Start: {new Date(selectedAAR.startTime).toLocaleString()}</div>
                 <div>End: {new Date(selectedAAR.endTime || selectedAAR.startTime).toLocaleString()}</div>
               </div>
             </div>
 
-            {/* Recorded Decisions Timeline */}
+            {/* Communication Friction Analysis Banner */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', backgroundColor: '#F8FAFC', padding: '14px', border: '1px solid #CBD5E1' }}>
+              <div>
+                <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>EXERCISE DURATION</div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>{selectedAAR.durationMinutes || 45} mins</div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>DECISIONS LOGGED</div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>{selectedAAR.decisions?.length || 0} Actions</div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>LATENCY DISPATCHES</div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#B45309' }}>Signal Delays Applied</div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>DROPPED MESSAGES</div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#991B1B' }}>Undelivered Logged</div>
+              </div>
+            </div>
+
+            {/* Recorded Decisions & Rationale Timeline */}
             <div>
-              <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '10px' }}>
-                Submitted Command Decisions & Rationales ({selectedAAR.decisions?.length || 0})
+              <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '12px' }}>
+                Participant Submitted Command Decisions ({selectedAAR.decisions?.length || 0})
               </h3>
 
               {!selectedAAR.decisions || selectedAAR.decisions.length === 0 ? (
@@ -186,7 +212,7 @@ export const AfterActionReview = ({
                       </div>
 
                       <div style={{ fontSize: '13px', color: 'var(--color-text-primary)', marginTop: '6px', lineHeight: '1.5' }}>
-                        <strong>Rationale:</strong> {d.rationale}
+                        <strong>Rationale & Assumptions:</strong> {d.rationale}
                       </div>
 
                       <div style={{ fontSize: '11px', color: '#64748B', marginTop: '8px', display: 'flex', gap: '16px' }}>
@@ -199,7 +225,7 @@ export const AfterActionReview = ({
               )}
             </div>
 
-            {/* Instructor Notes Section (Qualitative Observations) */}
+            {/* Instructor Qualitative Observations */}
             <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', padding: '18px', borderTop: '3px solid var(--color-terracotta)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', display: 'flex', alignItems: 'center', gap: '6px' }}>
