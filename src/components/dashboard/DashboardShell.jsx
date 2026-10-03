@@ -10,6 +10,7 @@ import { AfterActionReview } from './AfterActionReview';
 import { SettingsView } from './SettingsView';
 import { CreateMultiplayerModal } from './CreateMultiplayerModal';
 import { JoinSessionModal } from './JoinSessionModal';
+import { DemoGuide } from './DemoGuide';
 import { storageService } from '../../services/storageService';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 
@@ -171,6 +172,11 @@ export const DashboardShell = ({
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
         />
+
+          {/* Demo Guide — shown in all views except active training room */}
+          {activeView !== 'training-room' && (
+            <DemoGuide onNavigate={(view) => setActiveView(view)} />
+          )}
 
         {/* View Container */}
         <main style={{ flexGrow: 1 }}>

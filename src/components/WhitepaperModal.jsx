@@ -1,8 +1,10 @@
 import React from 'react';
 import { NationalEmblem } from './EmblemAndFlag';
 import { X, FileText, Download, ShieldCheck } from 'lucide-react';
+import { useToast } from './Toast';
 
 export const WhitepaperModal = ({ isOpen, onClose }) => {
+  const { showToast } = useToast();
   if (!isOpen) return null;
 
   return (
@@ -59,7 +61,7 @@ export const WhitepaperModal = ({ isOpen, onClose }) => {
             <button 
               className="gov-btn gov-btn-outline" 
               style={{ color: 'var(--color-primary-navy)', borderColor: '#CBD5E1' }}
-              onClick={() => alert('Downloading Whitepaper PDF... (REF: IND-FOG-2026-WP.pdf)')}
+              onClick={() => showToast('PDF download ready — REF: IND-FOG-2026-WP.pdf (Demo Mode: actual file export pending integration)', 'info', 5000)}
             >
               <Download size={14} />
               <span>Download PDF Specification</span>

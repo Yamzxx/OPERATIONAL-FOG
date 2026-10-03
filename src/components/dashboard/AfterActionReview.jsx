@@ -19,12 +19,14 @@ import {
 import { formatSecondsToMMSS } from '../../services/eventEngine';
 import { TimelineReplay } from './TimelineReplay';
 import { generateAARPDFReport } from '../../services/pdfExporter';
+import { useToast } from '../Toast';
 
 export const AfterActionReview = ({ 
   aars, 
   onSaveInstructorNote, 
   userRole 
 }) => {
+  const { showToast } = useToast();
   const [selectedAARId, setSelectedAARId] = useState(aars[0]?.id || null);
   const [noteInput, setNoteInput] = useState('');
   const [scenarioFilter, setScenarioFilter] = useState('ALL');
@@ -47,7 +49,7 @@ export const AfterActionReview = ({
   const handleSaveNote = () => {
     if (!selectedAAR) return;
     onSaveInstructorNote(selectedAAR.id, noteInput);
-    alert('Instructor qualitative debrief notes saved to AAR record.');
+    showToast('Instructor debrief notes saved to AAR record.', 'success');
   };
 
   const handleDownloadPDF = () => {

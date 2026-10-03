@@ -21,6 +21,7 @@ import {
 import { EventEngine, DELIVERY_STATUS, formatSecondsToMMSS } from '../../services/eventEngine';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 import { TeamCoordinationPanel } from './TeamCoordinationPanel';
+import { useToast } from '../Toast';
 
 export const TrainingRoom = ({ 
   session, 
@@ -30,6 +31,7 @@ export const TrainingRoom = ({
   onEndExercise, 
   existingDecisions = [] 
 }) => {
+  const { showToast } = useToast();
   const [engineState, setEngineState] = useState({
     elapsedSeconds: 0,
     elapsedFormatted: '00:00',
@@ -141,6 +143,8 @@ export const TrainingRoom = ({
       onSaveDecision(session.id, newDecision);
       setDecisions([...decisions, newDecision]);
     }
+
+    showToast(`Decision "${newDecision.title}" logged at T+${newDecision.elapsedTimeFormatted}.`, 'success');
 
     setDecisionTitle('');
     setRationale('');

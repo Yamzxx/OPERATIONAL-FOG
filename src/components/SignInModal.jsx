@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { NationalEmblem } from './EmblemAndFlag';
 import { ShieldCheck, Lock, User, Key, CheckCircle, LogOut, RefreshCw, X } from 'lucide-react';
+import { useToast } from './Toast';
 
 export const SignInModal = ({ isOpen, onClose, onSignInSuccess, currentUser, onSignOut }) => {
+  const { showToast } = useToast();
   const [role, setRole] = useState('instructor');
   const [serviceId, setServiceId] = useState('OPS-8842-IND');
   const [password, setPassword] = useState('••••••••••••');
@@ -57,7 +59,7 @@ export const SignInModal = ({ isOpen, onClose, onSignInSuccess, currentUser, onS
                 <button 
                   className="gov-btn gov-btn-primary" 
                   style={{ width: '100%', fontSize: '12px', padding: '6px' }}
-                  onClick={() => alert('Launching Instructor Console Sandbox... (Simulation Engine v2.4 Active)')}
+                  onClick={() => { onClose(); showToast('Instructor Console launched — navigate to Training Overview.', 'info'); }}
                 >
                   Launch Instructor Console
                 </button>
@@ -73,7 +75,7 @@ export const SignInModal = ({ isOpen, onClose, onSignInSuccess, currentUser, onS
                 <button 
                   className="gov-btn gov-btn-secondary" 
                   style={{ width: '100%', fontSize: '12px', padding: '6px' }}
-                  onClick={() => alert('Opening Participant Terminal... (Receiving Node Active)')}
+                  onClick={() => { onClose(); showToast('Participant Terminal active — proceed to Training Sessions.', 'info'); }}
                 >
                   Launch Terminal Sandbox
                 </button>

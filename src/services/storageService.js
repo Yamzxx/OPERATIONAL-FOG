@@ -10,8 +10,76 @@ const STORAGE_KEYS = {
   AARS: 'op_fog_aars_v1'
 };
 
-// Initial Fictional Scenarios
+// Default Scenarios including SIH Demonstration Scenario
 const DEFAULT_SCENARIOS = [
+  {
+    id: 'scen-sih-2026',
+    title: 'SIH Demo Scenario — Joint Tactical Node Resilience',
+    category: 'Joint Operations',
+    code: 'SCEN-SIH-2026',
+    shortDesc: 'Official Smart India Hackathon demonstration scenario featuring normal dispatches, 300s signal latency, dropped dispatches, and conflicting intel feeds.',
+    objective: 'Evaluate tactical decision discipline when primary telemetry links experience RF attenuation and contradictory reconnaissance dispatches.',
+    duration: '45 mins (SIH Demo Template)',
+    difficulty: 'High Friction',
+    status: 'Ready (SIH Demo)',
+    events: [
+      {
+        id: 'sih-ev-1',
+        time: '00:00',
+        title: 'Initial Tactical Dispatch',
+        type: 'info',
+        deliveryBehavior: 'normal',
+        delaySeconds: 0,
+        intendedRecipient: 'all',
+        content: 'Joint Command orders forward unit alignment along Sector Bravo. Telemetry channels operational.',
+        instructorNotes: 'Baseline event delivered at exercise start.'
+      },
+      {
+        id: 'sih-ev-2',
+        time: '05:00',
+        title: 'Signal Attenuation Warning',
+        type: 'warning',
+        deliveryBehavior: 'delayed',
+        delaySeconds: 300, // Delivered at 05:00 + 05:00 = 10:00
+        intendedRecipient: 'all',
+        content: 'RF jamming detected. Secondary satellite link experiencing 300-second latency.',
+        instructorNotes: 'Tests participant caution when dealing with delayed dispatches.'
+      },
+      {
+        id: 'sih-ev-3',
+        time: '12:00',
+        title: 'RF Blackout (Dropped Dispatch)',
+        type: 'alert',
+        deliveryBehavior: 'dropped',
+        delaySeconds: 0,
+        intendedRecipient: 'all',
+        content: 'Patrol Bravo emergency beacon update. Link dropped due to terrain masking.',
+        instructorNotes: 'Message is dropped from participant view but recorded in instructor audit log.'
+      },
+      {
+        id: 'sih-ev-4',
+        time: '18:00',
+        title: 'Forward Recon Update A',
+        type: 'info',
+        deliveryBehavior: 'normal',
+        delaySeconds: 0,
+        intendedRecipient: 'commander',
+        content: 'Reconnaissance Patrol Alpha reports Sector Bravo route clear of obstructions.',
+        instructorNotes: 'First intel report (delivered to Commander).'
+      },
+      {
+        id: 'sih-ev-5',
+        time: '25:00',
+        title: 'Satellite Imagery Feed B (Conflicting)',
+        type: 'warning',
+        deliveryBehavior: 'conflicting',
+        delaySeconds: 0,
+        intendedRecipient: 'all',
+        content: 'Thermal imagery feed Bravo indicates heavy route obstruction at Sector Bravo grid 44-B.',
+        instructorNotes: 'Contradicts Patrol Alpha report. Forces participant to record verification rationale.'
+      }
+    ]
+  },
   {
     id: 'scen-01',
     title: 'Scenario A — Communication Delay',
@@ -19,14 +87,14 @@ const DEFAULT_SCENARIOS = [
     code: 'SCEN-101',
     shortDesc: 'Messages arrive later than expected, requiring participants to manage out-of-order dispatches and incomplete information.',
     objective: 'Practice command discipline, prioritize essential dispatches, and maintain situational awareness during 5 to 15-minute signal blackouts.',
-    duration: '45 mins (Configurable Demo Value)',
+    duration: '45 mins',
     difficulty: 'Intermediate',
     status: 'Ready',
     events: [
-      { id: 'ev-1', time: '00:00', title: 'Initial Dispatch Received', type: 'info', content: 'Base command orders unit realignment along Sector Bravo. Telemetry link operational.' },
-      { id: 'ev-2', time: '05:00', title: 'Signal Attenuation Warning', type: 'warning', content: 'RF interference detected. Telemetry packet delay increased by 300 seconds.' },
-      { id: 'ev-3', time: '12:00', title: 'Delayed Field Update', type: 'delay', content: 'Reconnaissance dispatch received with 10-minute timestamp lag. Position unconfirmed.' },
-      { id: 'ev-4', time: '25:00', title: 'Secondary Link Restoration', type: 'success', content: 'Satellite relay restored. Verify pending orders before execution.' }
+      { id: 'ev-1', time: '00:00', title: 'Initial Dispatch Received', type: 'info', deliveryBehavior: 'normal', intendedRecipient: 'all', content: 'Base command orders unit realignment along Sector Bravo. Telemetry link operational.' },
+      { id: 'ev-2', time: '05:00', title: 'Signal Attenuation Warning', type: 'warning', deliveryBehavior: 'delayed', delaySeconds: 300, intendedRecipient: 'all', content: 'RF interference detected. Telemetry packet delay increased by 300 seconds.' },
+      { id: 'ev-3', time: '12:00', title: 'Delayed Field Update', type: 'delay', deliveryBehavior: 'delayed', delaySeconds: 600, intendedRecipient: 'all', content: 'Reconnaissance dispatch received with 10-minute timestamp lag. Position unconfirmed.' },
+      { id: 'ev-4', time: '25:00', title: 'Secondary Link Restoration', type: 'info', deliveryBehavior: 'normal', intendedRecipient: 'all', content: 'Satellite relay restored. Verify pending orders before execution.' }
     ]
   },
   {
@@ -36,13 +104,13 @@ const DEFAULT_SCENARIOS = [
     code: 'SCEN-102',
     shortDesc: 'Participants receive fictional intelligence reports that contradict each other and must record their reasoning before acting.',
     objective: 'Evaluate contradictory field reports, cross-verify source reliability, and document rationale under time pressure.',
-    duration: '60 mins (Configurable Demo Value)',
+    duration: '60 mins',
     difficulty: 'Advanced',
     status: 'Ready',
     events: [
-      { id: 'ev-1', time: '00:00', title: 'Joint Recon Briefing', type: 'info', content: 'Forward patrol Alpha reports sector clear of obstructions.' },
-      { id: 'ev-2', time: '08:00', title: 'Contradictory Intel Feed', type: 'warning', content: 'Satellite imagery feed Bravo indicates route obstruction at Grid 44-B.' },
-      { id: 'ev-3', time: '18:00', title: 'Liaison Query', type: 'delay', content: 'Regional control requests immediate confirmation of movement direction.' }
+      { id: 'ev-1', time: '00:00', title: 'Joint Recon Briefing', type: 'info', deliveryBehavior: 'normal', intendedRecipient: 'all', content: 'Forward patrol Alpha reports sector clear of obstructions.' },
+      { id: 'ev-2', time: '08:00', title: 'Contradictory Intel Feed', type: 'warning', deliveryBehavior: 'conflicting', intendedRecipient: 'all', content: 'Satellite imagery feed Bravo indicates route obstruction at Grid 44-B.' },
+      { id: 'ev-3', time: '18:00', title: 'Liaison Query', type: 'info', deliveryBehavior: 'normal', intendedRecipient: 'all', content: 'Regional control requests immediate confirmation of movement direction.' }
     ]
   },
   {
@@ -52,13 +120,13 @@ const DEFAULT_SCENARIOS = [
     code: 'SCEN-103',
     shortDesc: 'Participants must make and document decisions with limited information and missing grid coordinates.',
     objective: 'Formulate contingent action plans despite significant gaps in the common operating picture (COP).',
-    duration: '30 mins (Configurable Demo Value)',
+    duration: '30 mins',
     difficulty: 'High Friction',
     status: 'Ready',
     events: [
-      { id: 'ev-1', time: '00:00', title: 'Partial Situation Report', type: 'info', content: 'Supply convoy dispatch initiated. Sensor feed 3 offline.' },
-      { id: 'ev-2', time: '06:00', title: 'Truncated Order Received', type: 'warning', content: 'Dispatch received: "Hold position at sector [DATA CORRUPTED] until..."' },
-      { id: 'ev-3', time: '15:00', title: 'Urgent Decision Request', type: 'delay', content: 'Field unit requests authorization to proceed without complete grid coordinates.' }
+      { id: 'ev-1', time: '00:00', title: 'Partial Situation Report', type: 'info', deliveryBehavior: 'normal', intendedRecipient: 'all', content: 'Supply convoy dispatch initiated. Sensor feed 3 offline.' },
+      { id: 'ev-2', time: '06:00', title: 'Truncated Order Received', type: 'warning', deliveryBehavior: 'incomplete', intendedRecipient: 'all', content: 'Dispatch received: "Hold position at sector [DATA CORRUPTED] until..."' },
+      { id: 'ev-3', time: '15:00', title: 'Urgent Decision Request', type: 'info', deliveryBehavior: 'normal', intendedRecipient: 'all', content: 'Field unit requests authorization to proceed without complete grid coordinates.' }
     ]
   }
 ];
@@ -66,7 +134,21 @@ const DEFAULT_SCENARIOS = [
 // Initial Sample Sessions
 const DEFAULT_SESSIONS = [
   {
+    id: 'sess-sih-101',
+    sessionCode: 'FOG-SIH1',
+    name: 'SIH Joint Tactical Node Exercise',
+    scenarioId: 'scen-sih-2026',
+    scenarioTitle: 'SIH Demo Scenario — Joint Tactical Node Resilience',
+    status: 'Completed',
+    participantCount: 2,
+    creator: 'OPS-8842-IND',
+    createdAt: '2026-10-03T18:00:00Z',
+    completedAt: '2026-10-03T18:45:00Z',
+    isSample: true
+  },
+  {
     id: 'sess-101',
+    sessionCode: 'FOG-7429',
     name: 'Sector Bravo Latency Test',
     scenarioId: 'scen-01',
     scenarioTitle: 'Scenario A — Communication Delay',
@@ -76,51 +158,57 @@ const DEFAULT_SESSIONS = [
     createdAt: '2026-10-02T14:30:00Z',
     completedAt: '2026-10-02T15:15:00Z',
     isSample: true
-  },
-  {
-    id: 'sess-102',
-    name: 'Conflicting Recon Synthesis Exercise',
-    scenarioId: 'scen-02',
-    scenarioTitle: 'Scenario B — Conflicting Reports',
-    status: 'Completed',
-    participantCount: 1,
-    creator: 'OPS-8842-IND',
-    createdAt: '2026-10-01T10:00:00Z',
-    completedAt: '2026-10-01T11:00:00Z',
-    isSample: true
   }
 ];
 
 // Initial Sample AAR Records
 const DEFAULT_AARS = [
   {
-    id: 'aar-101',
-    sessionId: 'sess-101',
-    sessionName: 'Sector Bravo Latency Test',
-    scenarioTitle: 'Scenario A — Communication Delay',
+    id: 'aar-sih-101',
+    sessionId: 'sess-sih-101',
+    sessionCode: 'FOG-SIH1',
+    sessionName: 'SIH Joint Tactical Node Exercise',
+    scenarioTitle: 'SIH Demo Scenario — Joint Tactical Node Resilience',
     creator: 'OPS-8842-IND',
-    startTime: '2026-10-02T14:30:00Z',
-    endTime: '2026-10-02T15:15:00Z',
+    startTime: '2026-10-03T18:00:00Z',
+    endTime: '2026-10-03T18:45:00Z',
     durationMinutes: 45,
     decisionsCount: 2,
-    instructorNotes: 'Participant demonstrated good caution when handling 10-minute delayed dispatch. Recommended faster logging of contingent orders.',
+    instructorNotes: 'Participants handled the 300s delayed warning with proper caution. Successfully identified contradiction between Recon Patrol Alpha and Thermal Imagery Feed Bravo.',
     decisions: [
       {
-        id: 'dec-1',
-        title: 'Verify Recon Dispatch Timestamp',
-        rationale: 'Received field update with 10-minute lag. Sent verification query over secondary VHF link before altering unit movement.',
-        timestamp: '2026-10-02T14:42:00Z',
+        id: 'dec-sih-1',
+        title: 'Verify Signal Attenuation & Request Secondary VHF Link',
+        rationale: 'Telemetry experienced 300-second latency. Verified timestamp with Signals officer before changing unit formation.',
+        timestamp: '2026-10-03T18:12:00Z',
         elapsedMinutes: 12,
-        confidence: 'Medium'
+        elapsedTimeFormatted: '12:00',
+        confidence: 'High',
+        submittedBy: 'Commander Alpha',
+        submittedRole: 'commander'
       },
       {
-        id: 'dec-2',
-        title: 'Hold Position at Sector Bravo',
-        rationale: 'Primary satellite link re-established. Confirmed base command directive before executing forward deployment.',
-        timestamp: '2026-10-02T14:58:00Z',
+        id: 'dec-sih-2',
+        title: 'Hold Position at Sector Bravo Grid 44-B',
+        rationale: 'Received conflicting Thermal Imagery Feed Bravo indicating route obstruction. Ordered hold until ground recon cross-verifies.',
+        timestamp: '2026-10-03T18:28:00Z',
         elapsedMinutes: 28,
-        confidence: 'High'
+        elapsedTimeFormatted: '28:00',
+        confidence: 'Medium',
+        submittedBy: 'Commander Alpha',
+        submittedRole: 'commander'
       }
+    ],
+    events: [
+      { id: 'sih-ev-1', time: '00:00', scheduledTimeSec: 0, actualDeliveryTimeSec: 0, title: 'Initial Tactical Dispatch', type: 'info', deliveryBehavior: 'normal', recipientRole: 'all', content: 'Joint Command orders forward unit alignment along Sector Bravo.' },
+      { id: 'sih-ev-2', time: '05:00', scheduledTimeSec: 300, actualDeliveryTimeSec: 600, title: 'Signal Attenuation Warning', type: 'warning', deliveryBehavior: 'delayed', recipientRole: 'all', content: 'RF jamming detected. Secondary satellite link experiencing 300-second latency.' },
+      { id: 'sih-ev-3', time: '12:00', scheduledTimeSec: 720, actualDeliveryTimeSec: 720, title: 'RF Blackout (Dropped Dispatch)', type: 'alert', deliveryBehavior: 'dropped', recipientRole: 'all', content: 'Patrol Bravo emergency beacon update. Link dropped.' },
+      { id: 'sih-ev-4', time: '18:00', scheduledTimeSec: 1080, actualDeliveryTimeSec: 1080, title: 'Forward Recon Update A', type: 'info', deliveryBehavior: 'normal', recipientRole: 'commander', content: 'Reconnaissance Patrol Alpha reports Sector Bravo route clear.' },
+      { id: 'sih-ev-5', time: '25:00', scheduledTimeSec: 1500, actualDeliveryTimeSec: 1500, title: 'Satellite Imagery Feed B (Conflicting)', type: 'warning', deliveryBehavior: 'conflicting', recipientRole: 'all', content: 'Thermal imagery feed Bravo indicates heavy route obstruction at Sector Bravo grid 44-B.' }
+    ],
+    participants: [
+      { displayName: 'Commander Alpha', role: 'commander', status: 'Online' },
+      { displayName: 'Forward Observer Bravo', role: 'field_unit', status: 'Online' }
     ],
     isSample: true
   }

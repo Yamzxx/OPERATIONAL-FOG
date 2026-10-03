@@ -81,13 +81,13 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
           </div>
           
           <div style={{ display: 'flex', gap: '16px' }}>
-            <a href="#privacy" onClick={(e) => { e.preventDefault(); alert('Privacy Policy: All simulation logs are stored securely in local session storage.'); }}>Privacy Policy</a>
+            <a href="#privacy" onClick={(e) => e.preventDefault()}>Privacy Policy</a>
             <span>|</span>
-            <a href="#terms" onClick={(e) => { e.preventDefault(); alert('Terms of Service: Authorized defense training use only.'); }}>Terms of Service</a>
+            <a href="#terms" onClick={(e) => e.preventDefault()}>Terms of Service</a>
             <span>|</span>
-            <a href="#accessibility" onClick={(e) => { e.preventDefault(); alert('Accessibility: Compliant with GIGW (Guidelines for Indian Government Websites) accessibility norms.'); }}>Accessibility Statement</a>
+            <a href="#accessibility" onClick={(e) => e.preventDefault()}>Accessibility Statement</a>
             <span>|</span>
-            <a href="#sitemap" onClick={(e) => { e.preventDefault(); alert('Sitemap: Home, About, Modules, How It Works, Sign In, Workspaces.'); }}>Sitemap</a>
+            <a href="#sitemap" onClick={(e) => e.preventDefault()}>Sitemap</a>
           </div>
         </div>
       </div>
