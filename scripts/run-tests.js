@@ -3,10 +3,11 @@ import { spawnSync } from 'child_process';
 const testFiles = [
   'src/services/eventEngine.test.js',
   'src/services/multiplayerEngine.test.js',
-  'src/services/storageService.test.js'
+  'src/services/storageService.test.js',
+  'backend/tests/api.test.js'
 ];
 
-console.log('=== Operational Fog Test Suite Runner ===\n');
+console.log('=== Operational Fog Full Test Suite Runner ===\n');
 
 let failedCount = 0;
 
@@ -26,6 +27,6 @@ if (failedCount > 0) {
   console.error(`\n❌ ${failedCount} test suite(s) failed.`);
   process.exit(1);
 } else {
-  console.log('\n✅ All test suites passed successfully.');
+  console.log('\n✅ All test suites completed successfully.');
   process.exit(0);
 }

@@ -1,0 +1,68 @@
+services:
+  # 1. PostgreSQL Relational Database Service
+  db:
+    image: postgres:16-alpine
+    container_name: op-fog-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-op_fog_db}
+      POSTGRES_USER: ${POSTGRES_USER:-op_fog_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-op_fog_password}
+    ports:
+      # Bound to localhost for security — not exposed publicly
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - op-fog-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-op_fog_user} -d ${POSTGRES_DB:-op_fog_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 2. Node.js Express REST API Backend Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: op-fog-backend
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-op_fog_db}
+      DB_USER: ${POSTGRES_USER:-op_fog_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-op_fog_password}
+    ports:
+      - "4000:4000"
+    networks:
+      - op-fog-network
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # 3. React Vite Web Application Frontend Service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: op-fog-frontend
+    restart: unless-stopped
+    environment:
+      VITE_BACKEND_URL: http://localhost:4000
+    ports:
+      - "5173:5173"
+    networks:
+      - op-fog-network
+    depends_on:
+      - backend
+
+networks:
+  op-fog-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local

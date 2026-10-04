@@ -263,6 +263,10 @@ function setItem(key, value) {
   }
 }
 
+const API_BASE_URL = typeof process !== 'undefined' && process.env?.VITE_BACKEND_URL 
+  ? process.env.VITE_BACKEND_URL + '/api'
+  : 'http://localhost:4000/api';
+
 export const storageService = {
   // Scenarios
   getScenarios: () => {
@@ -278,6 +282,16 @@ export const storageService = {
     const list = storageService.getScenarios();
     const updated = [newScenario, ...list];
     setItem(STORAGE_KEYS.SCENARIOS, JSON.stringify(updated));
+
+    // Async sync to Backend API if reachable
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/scenarios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newScenario)
+      }).catch(() => {});
+    }
+
     return updated;
   },
 
@@ -303,6 +317,16 @@ export const storageService = {
     };
     const updated = [newSession, ...list];
     setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(updated));
+
+    // Async sync to Backend API if reachable
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSession)
+      }).catch(() => {});
+    }
+
     return newSession;
   },
 
@@ -310,6 +334,15 @@ export const storageService = {
     const list = storageService.getSessions();
     const updated = list.map(s => s.id === sessionId ? { ...s, status, completedAt: status === 'Completed' ? new Date().toISOString() : s.completedAt } : s);
     setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(updated));
+
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/sessions/${sessionId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      }).catch(() => {});
+    }
+
     return updated;
   },
 
@@ -333,6 +366,15 @@ export const storageService = {
     };
     const updated = [...list, newDecision];
     setItem(STORAGE_KEYS.DECISIONS, JSON.stringify(updated));
+
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/decisions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newDecision)
+      }).catch(() => {});
+    }
+
     return newDecision;
   },
 
@@ -362,6 +404,15 @@ export const storageService = {
     };
     const updated = [newAAR, ...list];
     setItem(STORAGE_KEYS.AARS, JSON.stringify(updated));
+
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/aars`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newAAR)
+      }).catch(() => {});
+    }
+
     return newAAR;
   },
 
@@ -369,6 +420,15 @@ export const storageService = {
     const list = storageService.getAARs();
     const updated = list.map(aar => aar.id === aarId ? { ...aar, instructorNotes: noteText } : aar);
     setItem(STORAGE_KEYS.AARS, JSON.stringify(updated));
+
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/aars/${aarId}/note`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteText })
+      }).catch(() => {});
+    }
+
     return updated;
   }
 };
