@@ -105,8 +105,8 @@ export const OverviewDashboard = ({
           <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
             Training Metrics & Summary
           </h3>
-          <span style={{ fontSize: '11px', color: '#64748B' }}>
-            Real-Time Synchronization Layer Active
+          <span style={{ fontSize: '11px', color: '#15803D', fontWeight: '700' }}>
+            PostgreSQL Persistent Storage Active
           </span>
         </div>
 
@@ -117,16 +117,16 @@ export const OverviewDashboard = ({
             <div style={{ fontSize: '28px', fontWeight: '800', color: 'var(--color-primary-navy)', margin: '4px 0' }}>
               {scenarios.length}
             </div>
-            <div style={{ fontSize: '11px', color: '#0369A1', fontWeight: '600' }}>Fictional Standard Templates</div>
+            <div style={{ fontSize: '11px', color: '#0369A1', fontWeight: '600' }}>Configured Scenarios</div>
           </div>
 
           {/* Card 2: Active Sessions */}
           <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid #F59E0B', padding: '18px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748B' }}>ACTIVE MULTIPLAYER SESSIONS</div>
+            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748B' }}>ACTIVE EXERCISES</div>
             <div style={{ fontSize: '28px', fontWeight: '800', color: '#B45309', margin: '4px 0' }}>
               {activeSessions.length}
             </div>
-            <div style={{ fontSize: '11px', color: '#B45309', fontWeight: '600' }}>Multi-Participant Workspaces</div>
+            <div style={{ fontSize: '11px', color: '#B45309', fontWeight: '600' }}>In-Progress Workspaces</div>
           </div>
 
           {/* Card 3: Completed Exercises */}

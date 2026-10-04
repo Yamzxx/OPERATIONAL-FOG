@@ -54,6 +54,8 @@ services:
       VITE_BACKEND_URL: http://localhost:4000
     ports:
       - "5173:5173"
+    volumes:
+      - ./src:/app/src
     networks:
       - op-fog-network
     depends_on:
