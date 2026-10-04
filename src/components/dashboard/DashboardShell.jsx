@@ -102,7 +102,7 @@ export const DashboardShell = ({
     storageService.addDecision(sessionId, decisionData);
   };
 
-  const handleEndExercise = (session, decisions, durationMinutes) => {
+  const handleEndExercise = (session, decisions, durationMinutes, events = []) => {
     // Update session status
     if (session.sessionCode) {
       multiplayerEngine.endExercise(session.sessionCode);
@@ -115,6 +115,7 @@ export const DashboardShell = ({
     // Save AAR record
     const newAAR = storageService.saveAAR({
       sessionId: session.id,
+      sessionCode: session.sessionCode || session.id,
       sessionName: session.name,
       scenarioTitle: session.scenarioTitle,
       creator: session.creator || currentUser?.serviceId,
@@ -123,6 +124,7 @@ export const DashboardShell = ({
       durationMinutes,
       decisionsCount: decisions.length,
       decisions,
+      events: events.length > 0 ? events : (activeScenario?.events || []),
       participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
     });
 

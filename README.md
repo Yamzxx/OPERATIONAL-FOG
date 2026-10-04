@@ -12,18 +12,20 @@
 
 **Operational Fog** is a specialized simulation framework developed to prepare commanders, signal officers, and strategic planners for decision-making under severe communication friction.
 
-In modern crisis management and joint operations, radio, satellite, and telemetry links are frequently subject to physical obstacle masking, electromagnetic interference, dynamic latency, packet drops, and adversarial jamming. **Operational Fog** injects controlled message delays, unannounced dispatch blackouts, and contradictory field reports into structured training scenarios to evaluate human adaptability, verification discipline, and organizational resilience.
+In modern crisis management and joint operations, radio, satellite, and telemetry links are frequently subject to physical obstacle masking, electromagnetic interference, dynamic latency, packet drops, and adversarial jamming. **Operational Fog** injects controlled message delays, unannounced dispatch blackouts, contradictory field reports, and truncated dispatches into structured training scenarios to evaluate human adaptability, verification discipline, and organizational resilience.
 
 ---
 
 ## 2. Technology Stack
 
-- **Core Framework**: React 19 + Vite 8
+- **Core Framework**: React 19 + Vite 8 (JavaScript ES Modules)
 - **Icons & UI Vectors**: Lucide React Icons & Custom Inline SVG (Indian National Emblem Ashoka Capital & Tiranga Flag)
 - **Styling & Design System**: Vanilla CSS Design System ([`src/index.css`](file:///c:/Users/Yamini/OPERATIONAL-FOG/src/index.css)) adhering to Indian Government Ministry Portal Guidelines (NIC / India.gov.in aesthetic)
 - **Simulation Engine**: Custom Deterministic Scenario Event Engine ([`src/services/eventEngine.js`](file:///c:/Users/Yamini/OPERATIONAL-FOG/src/services/eventEngine.js))
 - **Multiplayer Synchronization**: Real-Time Cross-Tab / Multi-Window Sync Engine via BroadcastChannel API & LocalStorage Event Listeners ([`src/services/multiplayerEngine.js`](file:///c:/Users/Yamini/OPERATIONAL-FOG/src/services/multiplayerEngine.js))
+- **Data Persistence**: In-Browser & In-Memory Data Storage Layer ([`src/services/storageService.js`](file:///c:/Users/Yamini/OPERATIONAL-FOG/src/services/storageService.js))
 - **PDF Export**: Zero-dependency Printable AAR Audit Report Exporter ([`src/services/pdfExporter.js`](file:///c:/Users/Yamini/OPERATIONAL-FOG/src/services/pdfExporter.js))
+- **Testing & Quality Assurance**: Node.js Native Test Runner (`node:test` & `node:assert`) + Oxlint
 
 ---
 
@@ -32,6 +34,9 @@ In modern crisis management and joint operations, radio, satellite, and telemetr
 ### Prerequisites
 - Node.js `v20.0.0` or higher (Tested on Node `v22.19.0`)
 - npm `v10.0.0` or higher
+
+### Environment Setup
+No secret environment variables or API keys are required to run this prototype. All demo credentials and scenario templates operate locally.
 
 ### Development Server
 ```bash
@@ -54,46 +59,55 @@ npm run preview
 
 ---
 
-## 4. How to Run Automated Unit Tests
+## 4. How to Run Automated Tests & Code Quality Checks
 
-The repository includes a comprehensive 12-test automated unit test suite covering deterministic event delivery, latency applications, dropped dispatch exclusions, recipient role filtering, pause/resume integrity, multiplayer join codes, and decision synchronization.
+The repository includes a comprehensive 16-test automated unit test suite covering deterministic event delivery, latency applications, dropped dispatch exclusions, recipient role filtering, pause/resume integrity, multiplayer join codes, decision synchronization, storage CRUD persistence, and AAR record generation.
 
 ```bash
-# Execute unit & engine test suite
-node scratch/test-runner.js
+# Execute unit test suite
+npm test
+
+# Run linter checks
+npm run lint
+
+# Run production build check
+npm run build
 ```
 
-**Expected Output:**
+**Expected Test Output:**
 ```text
-=== OPERATIONAL FOG AUTOMATED TEST SUITE ===
+=== Operational Fog Test Suite Runner ===
 
---- 1. DETERMINISTIC EVENT ENGINE TESTS ---
-[PASS] Test 1: Initial State (T=0s) — Expected 0 messages delivered, got 0
-[PASS] Test 2: Normal Message Delivery (T=5s) — Expected 1 normal message, got 1
-[PASS] Test 3: Delayed Message Status (T=10s) — Expected ev-2 status DELAYED, got DELAYED
-[PASS] Test 4: Dropped Message Handling (T=15s) — Dropped message excluded from participant view: true
-[PASS] Test 5: Recipient Role Targeting (T=20s) — Commander saw ev-4: true, Field Unit excluded: true
-[PASS] Test 6: Delayed Message Delivery Completion (T=25s) — Delayed ev-2 delivered at T=25s: true
-[PASS] Test 7: Pause / Resume Integrity — Elapsed time remained 25s during pause: true
+--- Running Test Suite: src/services/eventEngine.test.js ---
+✔ EventEngine - Initial State at T=0s
+✔ EventEngine - Normal Message Delivery at T=5s
+✔ EventEngine - Delayed Message Status at T=10s
+✔ EventEngine - Dropped Message Handling at T=15s
+✔ EventEngine - Recipient Role Targeting at T=20s
+✔ EventEngine - Delayed Message Delivery Completion at T=25s
+✔ EventEngine - Pause and Resume Integrity
 
---- 2. MULTIPLAYER REAL-TIME ENGINE TESTS ---
-[PASS] Test 1: Create Multiplayer Session & Join Code — Created session FOG-**** with 1 participant
-[PASS] Test 2: Participant Join & Status Ready — Participant count: 2, Status: Ready
-[PASS] Test 3: Team Message Broadcast & Persistence — Message stored
-[PASS] Test 4: Decision Submission Sync — Decision title logged
-[PASS] Test 5: Start & End Session State Transitions — Started status: In Progress, Ended status: Completed
+--- Running Test Suite: src/services/multiplayerEngine.test.js ---
+✔ MultiplayerEngine - Create Session & Generate Join Code
+✔ MultiplayerEngine - Participant Join & Status Update
+✔ MultiplayerEngine - Send Team Message
+✔ MultiplayerEngine - Decision Submission Sync
+✔ MultiplayerEngine - Start & End Exercise Transitions
 
-===========================================
-TOTAL TEST SUMMARY: 12 / 12 PASSED
-===========================================
-SUCCESS: All unit and engine tests passed cleanly!
+--- Running Test Suite: src/services/storageService.test.js ---
+✔ StorageService - Retrieve Default Scenarios
+✔ StorageService - Create & Save Custom Scenario
+✔ StorageService - Create Session & Add Decision
+✔ StorageService - Save AAR & Update Instructor Note
+
+✅ All test suites passed successfully.
 ```
 
 ---
 
 ## 5. SIH Demonstration Workflow
 
-For an effective demonstration (e.g. during a Hackathon or presentation):
+For an effective demonstration (e.g., during a Hackathon jury presentation):
 
 1. **Public Landing Page**:
    - Open `http://localhost:5173/`. Observe the Indian Government Portal aesthetic, Ashoka emblem, utility bar clock, font scale adjusters, and High Contrast accessibility toggles.
@@ -104,8 +118,8 @@ For an effective demonstration (e.g. during a Hackathon or presentation):
    - Click **Start Exercise**.
 4. **Real-Time Training Room Execution**:
    - Observe the live timer (`T+ MM:SS`). Step through simulation dispatches.
-   - Observe **Signal Attenuation Warning** (300s latency) and **RF Blackout (Dropped Dispatch)**.
-   - Notice that the dropped message is excluded from the Participant Feed but recorded in the **Instructor Control Tab**.
+   - Observe **Signal Attenuation Warning** (300s latency), **RF Blackout (Dropped Dispatch)**, **Conflicting Recon Feeds**, and **Truncated Supply Dispatches**.
+   - Notice that dropped messages are excluded from the Participant Feed but recorded in the **Instructor Control Tab**.
    - Enter a decision and rationale in the **Decision Console** (e.g., *"Hold Position pending timestamp verification"*).
 5. **Multiplayer Demonstration**:
    - Open a second browser window/tab to `http://localhost:5173/`.
@@ -127,8 +141,8 @@ OPERATIONAL-FOG/
 │   │   ├── hero_banner.jpg        # High-tech control room hero background
 │   │   ├── exercise_1.jpg         # Training seminar photo
 │   │   └── exercise_2.jpg         # Technical console photo
-├── scratch/
-│   └── test-runner.js             # Automated unit test suite runner
+├── scripts/
+│   └── run-tests.js               # Cross-platform automated test runner
 ├── src/
 │   ├── components/
 │   │   ├── EmblemAndFlag.jsx       # Indian National Emblem & Tiranga SVG vectors
@@ -165,8 +179,9 @@ OPERATIONAL-FOG/
 │   │   ├── eventEngine.test.js    # Engine unit tests
 │   │   ├── multiplayerEngine.js   # Real-time cross-tab sync layer
 │   │   ├── multiplayerEngine.test.js # Multiplayer unit tests
-│   │   ├── pdfExporter.js         # Printable AAR PDF generator
-│   │   └── storageService.js      # LocalStorage & demo scenario persistence
+│   │   ├── storageService.js      # LocalStorage & demo scenario persistence
+│   │   ├── storageService.test.js # Storage & AAR unit tests
+│   │   └── pdfExporter.js         # Printable AAR PDF generator
 │   ├── App.jsx                    # Root application component
 │   └── index.css                  # Government design system CSS
 ├── index.html                     # HTML5 SEO entrypoint
@@ -175,11 +190,14 @@ OPERATIONAL-FOG/
 
 ---
 
-## 7. Known Limitations & Prototype Status
+## 7. Prototype Status vs Future Enhancements
 
-- **Demo Authentication**: Uses simulated credentials (`OPS-8842-IND`) for presentation convenience.
-- **Cross-Tab Synchronization**: Real-time sync operates via `BroadcastChannel` and LocalStorage events across tabs/windows on the same machine. For multi-server production deployment, WebSockets over a dedicated Node/FastAPI backend can be attached to `multiplayerEngine.js`.
-- **Fictional Data**: All military dispatches, grid references, and scenario events are strictly fictional and intended for general crisis management training.
+| Feature Area | Current Prototype Capability | Production Roadmap Enhancement |
+| :--- | :--- | :--- |
+| **Authentication** | Pre-filled demo roles & captcha validation | OAuth2 / SAML2 / Gov e-Pramaan SSO |
+| **Multiplayer Sync** | Real-time cross-tab sync via `BroadcastChannel` & LocalStorage | Centralized WebSocket server (Node.js/FastAPI) |
+| **Scenario Engine** | Deterministic scheduling, 5 delivery behaviors, role filtering | Dynamic AI red-teaming & adaptive signal propagation modeling |
+| **Audit & Reporting** | Browser-generated printable AAR PDF reports | Encrypted immutable audit trail & analytics dashboard |
 
 ---
 

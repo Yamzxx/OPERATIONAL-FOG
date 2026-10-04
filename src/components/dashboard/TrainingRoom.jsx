@@ -575,7 +575,8 @@ export const TrainingRoom = ({
                     if (session?.sessionCode) {
                       multiplayerEngine.endExercise(session.sessionCode);
                     }
-                    onEndExercise(session, decisions, Math.floor(engineState.elapsedSeconds / 60));
+                    const currentLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
+                    onEndExercise(session, decisions, Math.floor(engineState.elapsedSeconds / 60), currentLog);
                   }}
                 >
                   Confirm & End Session

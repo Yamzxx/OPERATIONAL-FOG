@@ -7,32 +7,32 @@
   --color-terracotta-light: #A53228;
   --color-gold-accent: #C59B27;
   --color-gold-light: #FFF9E6;
-  
+
   --color-bg-light: #F4F6F8;
   --color-bg-subtle: #EAEFF3;
   --color-bg-white: #FFFFFF;
   --color-bg-card: #FFFFFF;
-  
+
   --color-text-primary: #1A1E24;
   --color-text-secondary: #4A5568;
   --color-text-muted: #718096;
   --color-text-inverse: #FFFFFF;
-  
+
   --color-border-light: #D1D5DB;
   --color-border-medium: #9CA3AF;
   --color-border-dark: #374151;
-  
+
   --color-footer-bg: #1A1E24;
   --color-footer-text: #E2E8F0;
-  
+
   --font-family-serif: 'Merriweather', 'Georgia', serif;
   --font-family-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   --font-family-mono: 'Consolas', 'Courier New', monospace;
-  
+
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.12);
-  
+
   --font-scale: 1rem;
 }
 
@@ -55,9 +55,17 @@
 }
 
 /* Font scale modifier */
-.font-scale-sm { font-size: 14px; }
-.font-scale-md { font-size: 16px; }
-.font-scale-lg { font-size: 18px; }
+.font-scale-sm {
+  font-size: 14px;
+}
+
+.font-scale-md {
+  font-size: 16px;
+}
+
+.font-scale-lg {
+  font-size: 18px;
+}
 
 * {
   box-sizing: border-box;
@@ -112,7 +120,8 @@ button {
   gap: 8px;
 }
 
-.gov-utility-left, .gov-utility-right {
+.gov-utility-left,
+.gov-utility-right {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -902,7 +911,8 @@ button {
   margin-bottom: 6px;
 }
 
-.gov-form-input, .gov-form-select {
+.gov-form-input,
+.gov-form-select {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--color-border-medium);
@@ -911,7 +921,8 @@ button {
   background-color: #FFFFFF;
 }
 
-.gov-form-input:focus, .gov-form-select:focus {
+.gov-form-input:focus,
+.gov-form-select:focus {
   outline: 2px solid var(--color-primary-navy);
   border-color: var(--color-primary-navy);
 }

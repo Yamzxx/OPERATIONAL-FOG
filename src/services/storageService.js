@@ -77,6 +77,28 @@ const DEFAULT_SCENARIOS = [
         intendedRecipient: 'all',
         content: 'Thermal imagery feed Bravo indicates heavy route obstruction at Sector Bravo grid 44-B.',
         instructorNotes: 'Contradicts Patrol Alpha report. Forces participant to record verification rationale.'
+      },
+      {
+        id: 'sih-ev-6',
+        time: '30:00',
+        title: 'Intercepted Signals Intel C (Conflicting Report 2)',
+        type: 'warning',
+        deliveryBehavior: 'conflicting',
+        delaySeconds: 0,
+        intendedRecipient: 'all',
+        content: 'Electronic warfare intercept indicates enemy decoy emitter active at Sector Bravo grid 44-B.',
+        instructorNotes: 'Second conflicting report providing alternate explanation for thermal imagery.'
+      },
+      {
+        id: 'sih-ev-7',
+        time: '35:00',
+        title: 'Truncated Supply Order D (Incomplete Report)',
+        type: 'warning',
+        deliveryBehavior: 'incomplete',
+        delaySeconds: 0,
+        intendedRecipient: 'all',
+        content: 'Resupply dispatch received: "Hold position at grid [DATA CORRUPTED] until secondary convoy arrives at..."',
+        instructorNotes: 'Incomplete information dispatch requiring contingent decision rationale.'
       }
     ]
   },
@@ -204,7 +226,9 @@ const DEFAULT_AARS = [
       { id: 'sih-ev-2', time: '05:00', scheduledTimeSec: 300, actualDeliveryTimeSec: 600, title: 'Signal Attenuation Warning', type: 'warning', deliveryBehavior: 'delayed', recipientRole: 'all', content: 'RF jamming detected. Secondary satellite link experiencing 300-second latency.' },
       { id: 'sih-ev-3', time: '12:00', scheduledTimeSec: 720, actualDeliveryTimeSec: 720, title: 'RF Blackout (Dropped Dispatch)', type: 'alert', deliveryBehavior: 'dropped', recipientRole: 'all', content: 'Patrol Bravo emergency beacon update. Link dropped.' },
       { id: 'sih-ev-4', time: '18:00', scheduledTimeSec: 1080, actualDeliveryTimeSec: 1080, title: 'Forward Recon Update A', type: 'info', deliveryBehavior: 'normal', recipientRole: 'commander', content: 'Reconnaissance Patrol Alpha reports Sector Bravo route clear.' },
-      { id: 'sih-ev-5', time: '25:00', scheduledTimeSec: 1500, actualDeliveryTimeSec: 1500, title: 'Satellite Imagery Feed B (Conflicting)', type: 'warning', deliveryBehavior: 'conflicting', recipientRole: 'all', content: 'Thermal imagery feed Bravo indicates heavy route obstruction at Sector Bravo grid 44-B.' }
+      { id: 'sih-ev-5', time: '25:00', scheduledTimeSec: 1500, actualDeliveryTimeSec: 1500, title: 'Satellite Imagery Feed B (Conflicting)', type: 'warning', deliveryBehavior: 'conflicting', recipientRole: 'all', content: 'Thermal imagery feed Bravo indicates heavy route obstruction at Sector Bravo grid 44-B.' },
+      { id: 'sih-ev-6', time: '30:00', scheduledTimeSec: 1800, actualDeliveryTimeSec: 1800, title: 'Intercepted Signals Intel C (Conflicting 2)', type: 'warning', deliveryBehavior: 'conflicting', recipientRole: 'all', content: 'Electronic warfare intercept indicates enemy decoy emitter active at Sector Bravo grid 44-B.' },
+      { id: 'sih-ev-7', time: '35:00', scheduledTimeSec: 2100, actualDeliveryTimeSec: 2100, title: 'Truncated Supply Order D (Incomplete)', type: 'warning', deliveryBehavior: 'incomplete', recipientRole: 'all', content: 'Resupply dispatch received: "Hold position at grid [DATA CORRUPTED] until secondary convoy arrives at..."' }
     ],
     participants: [
       { displayName: 'Commander Alpha', role: 'commander', status: 'Online' },
@@ -214,11 +238,36 @@ const DEFAULT_AARS = [
   }
 ];
 
+const inMemoryStore = new Map();
+
+function getItem(key) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(key);
+    }
+    return inMemoryStore.get(key) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function setItem(key, value) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, value);
+    } else {
+      inMemoryStore.set(key, value);
+    }
+  } catch (e) {
+    // Ignore storage quota or environment errors
+  }
+}
+
 export const storageService = {
   // Scenarios
   getScenarios: () => {
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.SCENARIOS);
+      const data = getItem(STORAGE_KEYS.SCENARIOS);
       return data ? JSON.parse(data) : DEFAULT_SCENARIOS;
     } catch (e) {
       return DEFAULT_SCENARIOS;
@@ -228,14 +277,14 @@ export const storageService = {
   saveScenario: (newScenario) => {
     const list = storageService.getScenarios();
     const updated = [newScenario, ...list];
-    localStorage.setItem(STORAGE_KEYS.SCENARIOS, JSON.stringify(updated));
+    setItem(STORAGE_KEYS.SCENARIOS, JSON.stringify(updated));
     return updated;
   },
 
   // Sessions
   getSessions: () => {
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.SESSIONS);
+      const data = getItem(STORAGE_KEYS.SESSIONS);
       return data ? JSON.parse(data) : DEFAULT_SESSIONS;
     } catch (e) {
       return DEFAULT_SESSIONS;
@@ -253,21 +302,21 @@ export const storageService = {
       ...sessionData
     };
     const updated = [newSession, ...list];
-    localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(updated));
+    setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(updated));
     return newSession;
   },
 
   updateSessionStatus: (sessionId, status) => {
     const list = storageService.getSessions();
     const updated = list.map(s => s.id === sessionId ? { ...s, status, completedAt: status === 'Completed' ? new Date().toISOString() : s.completedAt } : s);
-    localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(updated));
+    setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(updated));
     return updated;
   },
 
   // Decisions
   getDecisions: () => {
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.DECISIONS);
+      const data = getItem(STORAGE_KEYS.DECISIONS);
       return data ? JSON.parse(data) : [];
     } catch (e) {
       return [];
@@ -283,7 +332,7 @@ export const storageService = {
       ...decisionData
     };
     const updated = [...list, newDecision];
-    localStorage.setItem(STORAGE_KEYS.DECISIONS, JSON.stringify(updated));
+    setItem(STORAGE_KEYS.DECISIONS, JSON.stringify(updated));
     return newDecision;
   },
 
@@ -295,7 +344,7 @@ export const storageService = {
   // AARs
   getAARs: () => {
     try {
-      const data = localStorage.getItem(STORAGE_KEYS.AARS);
+      const data = getItem(STORAGE_KEYS.AARS);
       return data ? JSON.parse(data) : DEFAULT_AARS;
     } catch (e) {
       return DEFAULT_AARS;
@@ -312,14 +361,14 @@ export const storageService = {
       ...aarData
     };
     const updated = [newAAR, ...list];
-    localStorage.setItem(STORAGE_KEYS.AARS, JSON.stringify(updated));
+    setItem(STORAGE_KEYS.AARS, JSON.stringify(updated));
     return newAAR;
   },
 
   saveAARNote: (aarId, noteText) => {
     const list = storageService.getAARs();
     const updated = list.map(aar => aar.id === aarId ? { ...aar, instructorNotes: noteText } : aar);
-    localStorage.setItem(STORAGE_KEYS.AARS, JSON.stringify(updated));
+    setItem(STORAGE_KEYS.AARS, JSON.stringify(updated));
     return updated;
   }
 };

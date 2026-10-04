@@ -57,7 +57,7 @@ export function formatSecondsToMMSS(totalSeconds) {
 export class EventEngine {
   constructor(scenario, options = {}) {
     this.scenario = scenario;
-    this.elapsedSeconds = 0;
+    this.elapsedSeconds = options.initialElapsed || 0;
     this.isRunning = false;
     this.isPaused = false;
     this.timerInterval = null;
@@ -66,7 +66,7 @@ export class EventEngine {
     // Normalize events list into engine internal state
     this.events = (scenario.events || []).map((ev, index) => {
       const scheduledSec = parseTimeToSeconds(ev.time || ev.scheduledTime || 0);
-      const delaySec = ev.delaySeconds || (ev.deliveryBehavior === 'delayed' ? (ev.delayAmount || 300) : 0);
+      const delaySec = ev.delaySeconds !== undefined ? Number(ev.delaySeconds) : (ev.deliveryBehavior === 'delayed' ? (ev.delayAmount || 300) : 0);
       const actualDeliverySec = ev.deliveryBehavior === 'delayed' ? scheduledSec + delaySec : scheduledSec;
 
       return {

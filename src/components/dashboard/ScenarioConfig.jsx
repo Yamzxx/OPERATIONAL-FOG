@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { 
-  BookOpen, 
   Plus, 
   Trash2, 
   ArrowUp, 
@@ -8,15 +7,9 @@ import {
   Eye, 
   Save, 
   ArrowLeft, 
-  Clock, 
-  AlertTriangle, 
-  HelpCircle, 
-  Sliders, 
-  ShieldCheck,
-  CheckCircle,
   X
 } from 'lucide-react';
-import { DELIVERY_BEHAVIORS, RECIPIENT_ROLES, formatSecondsToMMSS } from '../../services/eventEngine';
+import { parseTimeToSeconds, formatSecondsToMMSS } from '../../services/eventEngine';
 
 export const ScenarioConfig = ({ 
   scenarioToEdit, 
