@@ -98,7 +98,7 @@ export const TrainingSessions = ({
                 <tr key={sess.id} style={{ borderBottom: '1px solid #E2E8F0' }}>
                   <td style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
                     {sess.name}
-                    {sess.isSample && <span style={{ marginLeft: '8px', fontSize: '10px', background: '#E2E8F0', color: '#475569', padding: '1px 5px', borderRadius: '2px' }}>SAMPLE</span>}
+                    {sess.isSample && <span style={{ marginLeft: '8px', fontSize: '10px', background: '#E2E8F0', color: '#475569', padding: '1px 5px', fontWeight: 'bold', borderRadius: '2px' }}>PRE-SET</span>}
                   </td>
                   <td style={{ padding: '12px', color: '#475569' }}>{sess.scenarioTitle}</td>
                   <td style={{ padding: '12px' }}>

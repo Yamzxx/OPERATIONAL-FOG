@@ -184,7 +184,7 @@ export const OverviewDashboard = ({
                 <tr key={sess.id} style={{ borderBottom: '1px solid #E2E8F0' }}>
                   <td style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
                     {sess.name}
-                    {sess.isSample && <span style={{ marginLeft: '6px', fontSize: '10px', background: '#E2E8F0', color: '#475569', padding: '1px 4px' }}>SAMPLE</span>}
+                    {sess.isSample && <span style={{ marginLeft: '6px', fontSize: '10px', background: '#E2E8F0', color: '#475569', padding: '1px 5px', fontWeight: 'bold' }}>PRE-SET</span>}
                   </td>
                   <td style={{ padding: '12px', fontFamily: 'monospace', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
                     {sess.sessionCode || 'SINGLE-NODE'}
