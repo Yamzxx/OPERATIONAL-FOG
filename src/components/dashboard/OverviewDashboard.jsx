@@ -48,8 +48,8 @@ export const OverviewDashboard = ({
           </div>
 
           <div style={{ display: 'flex', gap: '8px' }}>
-            <span style={{ fontSize: '11px', background: '#FEF3C7', color: '#92400E', padding: '4px 10px', border: '1px solid #FCD34D', fontWeight: '700' }}>
-              PROTOTYPE DEMO MODE
+            <span style={{ fontSize: '11px', background: '#DCFCE7', color: '#15803D', padding: '4px 10px', border: '1px solid #86EFAC', fontWeight: '700' }}>
+              SYSTEM ONLINE — POSTGRESQL CONNECTED
             </span>
           </div>
         </div>

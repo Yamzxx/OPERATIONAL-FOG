@@ -15,7 +15,10 @@ export const ScenarioLibrary = ({
   scenarios, 
   searchQuery, 
   onStartScenario, 
-  onOpenCreateModal 
+  onOpenCreateModal,
+  onEditScenario,
+  onDuplicateScenario,
+  onArchiveScenario
 }) => {
   const [selectedScenario, setSelectedScenario] = useState(null);
   const [categoryFilter, setCategoryFilter] = useState('ALL');
@@ -119,23 +122,50 @@ export const ScenarioLibrary = ({
               <span>Friction: {scen.difficulty}</span>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
               <button 
                 className="gov-btn gov-btn-secondary" 
-                style={{ fontSize: '12px', padding: '8px' }}
+                style={{ fontSize: '11px', padding: '6px' }}
                 onClick={() => setSelectedScenario(scen)}
               >
-                <Info size={14} />
-                <span>View Details</span>
+                <Info size={13} />
+                <span>Details</span>
               </button>
 
               <button 
                 className="gov-btn gov-btn-primary" 
-                style={{ fontSize: '12px', padding: '8px' }}
+                style={{ fontSize: '11px', padding: '6px' }}
                 onClick={() => onStartScenario(scen)}
               >
-                <Play size={14} />
+                <Play size={13} />
                 <span>Start Exercise</span>
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px' }}>
+              <button 
+                onClick={() => onEditScenario(scen)}
+                style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', padding: '4px 6px', fontSize: '10px', fontWeight: 'bold', color: '#334155', cursor: 'pointer' }}
+              >
+                Edit Config
+              </button>
+
+              <button 
+                onClick={() => onDuplicateScenario(scen.id)}
+                style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', padding: '4px 6px', fontSize: '10px', fontWeight: 'bold', color: '#0369A1', cursor: 'pointer' }}
+              >
+                Duplicate
+              </button>
+
+              <button 
+                onClick={() => {
+                  if (confirm(`Archive scenario "${scen.title}"?`)) {
+                    onArchiveScenario(scen.id);
+                  }
+                }}
+                style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', padding: '4px 6px', fontSize: '10px', fontWeight: 'bold', color: '#991B1B', cursor: 'pointer' }}
+              >
+                Archive
               </button>
             </div>
           </div>

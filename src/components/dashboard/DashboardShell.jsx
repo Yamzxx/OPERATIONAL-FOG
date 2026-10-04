@@ -175,11 +175,6 @@ export const DashboardShell = ({
           setSearchQuery={setSearchQuery}
         />
 
-          {/* Demo Guide — shown in all views except active training room */}
-          {activeView !== 'training-room' && (
-            <DemoGuide onNavigate={(view) => setActiveView(view)} />
-          )}
-
         {/* View Container */}
         <main style={{ flexGrow: 1 }}>
           {activeView === 'overview' && (
@@ -205,6 +200,18 @@ export const DashboardShell = ({
               onOpenCreateModal={() => {
                 setScenarioToEdit(null);
                 setActiveView('scen-config');
+              }}
+              onEditScenario={(scen) => {
+                setScenarioToEdit(scen);
+                setActiveView('scen-config');
+              }}
+              onDuplicateScenario={(scenId) => {
+                const updated = storageService.duplicateScenario(scenId);
+                setScenarios(updated);
+              }}
+              onArchiveScenario={(scenId) => {
+                const updated = storageService.archiveScenario(scenId);
+                setScenarios(updated);
               }}
             />
           )}

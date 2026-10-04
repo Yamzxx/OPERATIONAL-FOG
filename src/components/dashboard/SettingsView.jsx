@@ -18,19 +18,18 @@ export const SettingsView = ({
           Settings & Environment Configuration
         </h1>
         <p style={{ fontSize: '13px', color: '#64748B', marginTop: '4px' }}>
-          Manage user profile preferences and demo environment settings.
+          Manage user profile preferences and operational platform settings.
         </p>
       </div>
 
-      {/* Demo Environment Information Box */}
-      <div style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', borderLeft: '4px solid #D97706', padding: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold', color: '#92400E', fontSize: '14px', marginBottom: '4px' }}>
+      {/* Environment Information Box */}
+      <div style={{ backgroundColor: '#F0F9FF', border: '1px solid #BAE6FD', borderLeft: '4px solid #0284C7', padding: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold', color: '#0369A1', fontSize: '14px', marginBottom: '4px' }}>
           <ShieldCheck size={18} />
-          <span>PROTOTYPE DEMO ENVIRONMENT NOTICE</span>
+          <span>SYSTEM & ENVIRONMENT INFORMATION</span>
         </div>
-        <div style={{ fontSize: '13px', color: '#78350F', lineHeight: '1.5' }}>
-          You are currently operating in a non-classified training simulation prototype. 
-          Session records and decision logs are stored in local session memory. Passwords and sensitive data are not persisted.
+        <div style={{ fontSize: '13px', color: '#0C4A6E', lineHeight: '1.5' }}>
+          Operational Fog training instance running with PostgreSQL persistent data storage. Session records and decision logs are saved securely.
         </div>
       </div>
 
@@ -49,7 +48,7 @@ export const SettingsView = ({
           </div>
 
           <div>
-            <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 'bold' }}>ASSIGNED DEMO ROLE</div>
+            <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 'bold' }}>ASSIGNED ROLE</div>
             <div style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-terracotta)' }}>
               {(currentUser?.role || 'INSTRUCTOR').toUpperCase()}
             </div>

@@ -167,7 +167,7 @@ export const TopNav = ({
               }}
             >
               <div style={{ fontSize: '11px', color: '#64748B', padding: '6px 8px', borderBottom: '1px solid #E2E8F0', fontWeight: 'bold' }}>
-                DEMO USER SESSION
+                AUTHENTICATED SESSION
               </div>
               <button 
                 onClick={() => { setShowProfileMenu(false); onSignOut(); }}

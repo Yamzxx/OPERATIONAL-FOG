@@ -174,7 +174,7 @@ export const AfterActionReview = ({
                   </div>
                   {aar.isSample && (
                     <span style={{ marginTop: '4px', display: 'inline-block', fontSize: '9px', background: '#E2E8F0', color: '#475569', padding: '1px 4px', fontWeight: 'bold' }}>
-                      SAMPLE DEMO RECORD
+                      PRE-CONFIGURED TEMPLATE
                     </span>
                   )}
                 </div>
@@ -190,7 +190,7 @@ export const AfterActionReview = ({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px' }}>
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: 'bold' }}>
-                  AAR REF: {selectedAAR.id} {selectedAAR.isSample ? '(SAMPLE DEMO RECORD)' : '(ACTUAL EXERCISE RECORD)'}
+                  AAR REF: {selectedAAR.id} {selectedAAR.isSample ? '(PRE-CONFIGURED TEMPLATE)' : '(PERSISTED EXERCISE RECORD)'}
                 </div>
                 <h2 style={{ fontFamily: 'var(--font-family-serif)', fontSize: '20px', fontWeight: '800', color: 'var(--color-primary-navy)', margin: '2px 0 4px' }}>
                   {selectedAAR.sessionName}

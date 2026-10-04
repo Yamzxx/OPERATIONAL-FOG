@@ -101,9 +101,9 @@ export const Sidebar = ({
             justifyContent: 'space-between'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#F59E0B', fontWeight: 'bold' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#38BDF8', fontWeight: 'bold' }}>
             <ShieldCheck size={14} />
-            <span>DEMO ENVIRONMENT</span>
+            <span>OPERATIONAL INSTANCE</span>
           </div>
           <span style={{ fontSize: '10px', background: 'var(--color-terracotta)', color: '#FFF', padding: '1px 6px', fontWeight: 'bold' }}>
             {userRole.toUpperCase()}

@@ -295,6 +295,46 @@ export const storageService = {
     return updated;
   },
 
+  duplicateScenario: (scenarioId) => {
+    const list = storageService.getScenarios();
+    const source = list.find(s => s.id === scenarioId);
+    if (!source) return list;
+    const copy = {
+      ...source,
+      id: `scen-copy-${Date.now()}`,
+      code: `SCEN-COPY-${Math.floor(100 + Math.random() * 900)}`,
+      title: `Copy of ${source.title}`,
+      createdAt: new Date().toISOString()
+    };
+    const updated = [copy, ...list];
+    setItem(STORAGE_KEYS.SCENARIOS, JSON.stringify(updated));
+
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/scenarios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(copy)
+      }).catch(() => {});
+    }
+
+    return updated;
+  },
+
+  archiveScenario: (scenarioId) => {
+    const list = storageService.getScenarios();
+    const updated = list.filter(s => s.id !== scenarioId);
+    setItem(STORAGE_KEYS.SCENARIOS, JSON.stringify(updated));
+
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/scenarios/${scenarioId}/archive`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {});
+    }
+
+    return updated;
+  },
+
   // Sessions
   getSessions: () => {
     try {
