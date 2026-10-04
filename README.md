@@ -29,42 +29,67 @@ In modern crisis management and joint operations, radio, satellite, and telemetr
 
 ---
 
-## 3. How to Run the Application
+## 3. Development Environment & Docker Setup
 
-### Prerequisites
-- Node.js `v20.0.0` or higher (Tested on Node `v22.19.0`)
-- npm `v10.0.0` or higher
+### Docker-First Standard Workflow (Recommended)
+Operational Fog is configured for containerized development using **Docker Compose**. Junior developers can spin up the full stack (Frontend, Express API Backend, PostgreSQL Database) without installing PostgreSQL locally.
 
-### Environment Setup
-No secret environment variables or API keys are required to run this prototype. All demo credentials and scenario templates operate locally.
+```bash
+# 1. Clone repository & setup environment
+git clone https://github.com/Yamzxx/OPERATIONAL-FOG.git
+cd OPERATIONAL-FOG
+cp .env.example .env
 
-### Development Server
+# 2. Build and launch all services (Frontend, Backend API, PostgreSQL DB)
+docker compose up --build
+
+# 3. Access applications in browser
+# Frontend UI: http://localhost:5173
+# Backend API Health check: http://localhost:4000/api/health
+```
+
+### Docker Service Management & Useful Commands
+```bash
+# View live container logs
+docker compose logs -f
+
+# View backend API container logs only
+docker compose logs -f backend
+
+# Run database migrations manually inside backend container
+docker compose exec backend node db/migrate.js
+
+# Execute automated test suite inside backend container
+docker compose exec backend npm test
+
+# Standard shutdown (Preserves all database records and named volumes)
+docker compose down
+
+# Note: DO NOT use 'docker compose down -v' unless you explicitly want to wipe persistent database data!
+```
+
+### Direct Local Node.js Setup (Standalone / Offline Fallback)
+If running without Docker:
+- **Node.js**: `v20.0.0` or higher (Tested on Node `v22.19.0`)
+- **npm**: `v10.0.0` or higher
+
 ```bash
 # Install dependencies
 npm install
 
-# Start local development server
+# Start local frontend dev server (operates in dual-mode fallback)
 npm run dev
 ```
-Open your browser and navigate to **`http://localhost:5173/`**.
-
-### Production Build Verification
-```bash
-# Build production bundle
-npm run build
-
-# Preview production build locally
-npm run preview
-```
+Open browser to **`http://localhost:5173/`**.
 
 ---
 
 ## 4. How to Run Automated Tests & Code Quality Checks
 
-The repository includes a comprehensive 16-test automated unit test suite covering deterministic event delivery, latency applications, dropped dispatch exclusions, recipient role filtering, pause/resume integrity, multiplayer join codes, decision synchronization, storage CRUD persistence, and AAR record generation.
+The repository includes a comprehensive 16-test automated unit and integration test suite (`src/services/eventEngine.test.js`, `src/services/multiplayerEngine.test.js`, `src/services/storageService.test.js`, `backend/tests/api.test.js`) covering deterministic event delivery, latency applications, dropped dispatch exclusions, recipient role filtering, state machine transitions, multiplayer join codes, decision synchronization, PostgreSQL schema migrations, REST endpoints, and AAR record generation.
 
 ```bash
-# Execute unit test suite
+# Execute full cross-platform test runner (All 4 test suites)
 npm test
 
 # Run linter checks
