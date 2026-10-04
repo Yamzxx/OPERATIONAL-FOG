@@ -217,38 +217,62 @@ app.post('/api/scenarios/:id/duplicate', requireRole(['instructor']), async (req
 // -------------------------------------------------------------
 // 3. EXERCISE SESSION LIFECYCLE ENDPOINTS
 // -------------------------------------------------------------
+function mapExerciseRow(r) {
+  const snapshot = typeof r.scenario_snapshot_json === 'string' ? JSON.parse(r.scenario_snapshot_json) : r.scenario_snapshot_json;
+  const participants = typeof r.participants_json === 'string' ? JSON.parse(r.participants_json) : (r.participants_json || []);
+  const teamMessages = typeof r.team_messages_json === 'string' ? JSON.parse(r.team_messages_json) : (r.team_messages_json || []);
+  return {
+    id: r.id,
+    sessionCode: r.session_code,
+    name: r.name,
+    scenarioId: r.scenario_id,
+    scenarioTitle: r.scenario_title,
+    scenarioSnapshot: snapshot,
+    scenario: snapshot,
+    status: r.status,
+    participantCount: r.participant_count || participants.length,
+    maxParticipants: r.max_participants || 6,
+    instructorId: r.instructor_id,
+    creator: r.creator,
+    participants: participants,
+    teamMessages: teamMessages,
+    isSample: r.is_sample,
+    createdAt: r.created_at,
+    completedAt: r.completed_at
+  };
+}
+
 app.get(['/api/exercises', '/api/sessions'], async (req, res) => {
   try {
     const result = await queryDB('SELECT * FROM exercises ORDER BY created_at DESC');
-    const list = result.rows.map(r => ({
-      id: r.id,
-      sessionCode: r.session_code,
-      name: r.name,
-      scenarioId: r.scenario_id,
-      scenarioTitle: r.scenario_title,
-      scenarioSnapshot: typeof r.scenario_snapshot_json === 'string' ? JSON.parse(r.scenario_snapshot_json) : r.scenario_snapshot_json,
-      status: r.status,
-      participantCount: r.participant_count,
-      maxParticipants: r.max_participants,
-      instructorId: r.instructor_id,
-      creator: r.creator,
-      participants: typeof r.participants_json === 'string' ? JSON.parse(r.participants_json) : r.participants_json,
-      teamMessages: typeof r.team_messages_json === 'string' ? JSON.parse(r.team_messages_json) : r.team_messages_json,
-      isSample: r.is_sample,
-      createdAt: r.created_at,
-      completedAt: r.completed_at
-    }));
+    const list = result.rows.map(mapExerciseRow);
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch exercise sessions', details: err.message });
   }
 });
 
-app.post(['/api/exercises', '/api/sessions'], requireRole(['instructor', 'commander']), async (req, res) => {
+app.get(['/api/exercises/code/:code', '/api/sessions/code/:code', '/api/exercises/:id'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.code || req.params.id || '').trim();
+    const result = await queryDB(
+      'SELECT * FROM exercises WHERE UPPER(session_code) = UPPER($1) OR id = $1',
+      [codeOrId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: `Session with join code or ID "${codeOrId}" not found.` });
+    }
+    res.json(mapExerciseRow(result.rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to lookup exercise session', details: err.message });
+  }
+});
+
+app.post(['/api/exercises', '/api/sessions'], async (req, res) => {
   try {
     const s = req.body;
     const id = s.id || `sess-${Date.now()}`;
-    const code = s.sessionCode || `FOG-${Math.floor(1000 + Math.random() * 9000)}`;
+    const code = (s.sessionCode || `FOG-${Math.floor(1000 + Math.random() * 9000)}`).toUpperCase().trim();
 
     // Fetch scenario to freeze immutable scenario snapshot at launch time
     let snapshot = s.scenarioSnapshot || s.scenario;
@@ -272,13 +296,17 @@ app.post(['/api/exercises', '/api/sessions'], requireRole(['instructor', 'comman
       return res.status(400).json({ error: 'Valid scenario reference or snapshot required to launch exercise.' });
     }
 
+    const creatorId = s.creator || req.user?.serviceId || 'OPS-8842-IND';
     const initialParticipants = s.participants || [
-      { id: `p-${Date.now()}`, serviceId: req.user.serviceId, displayName: `${req.user.serviceId} (Host)`, role: req.user.role || 'instructor', status: 'Online', joinedAt: new Date().toISOString() }
+      { id: `p-${Date.now()}`, serviceId: creatorId, displayName: `${creatorId} (Host)`, role: req.user?.role || 'instructor', status: 'Online', joinedAt: new Date().toISOString() }
     ];
 
     const result = await queryDB(
       `INSERT INTO exercises (id, session_code, name, scenario_id, scenario_title, scenario_snapshot_json, status, participant_count, max_participants, instructor_id, creator, participants_json, is_sample)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (id) DO UPDATE SET
+         participants_json = EXCLUDED.participants_json,
+         updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [
         id,
@@ -287,17 +315,17 @@ app.post(['/api/exercises', '/api/sessions'], requireRole(['instructor', 'comman
         s.scenarioId || snapshot.id || null,
         snapshot.title,
         JSON.stringify(snapshot),
-        'In Progress',
+        s.status || 'In Progress',
         initialParticipants.length,
         s.maxParticipants || 6,
-        req.user.serviceId,
-        req.user.serviceId,
+        creatorId,
+        creatorId,
         JSON.stringify(initialParticipants),
         s.isSample || false
       ]
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(mapExerciseRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: 'Failed to create exercise session', details: err.message });
   }
@@ -309,7 +337,7 @@ app.post('/api/exercises/:id/transition', requireRole(['instructor']), async (re
     const { id } = req.params;
     const { targetStatus } = req.body;
 
-    const current = await queryDB('SELECT * FROM exercises WHERE id = $1', [id]);
+    const current = await queryDB('SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)', [id]);
     if (current.rows.length === 0) {
       return res.status(404).json({ error: `Exercise session "${id}" not found.` });
     }
@@ -322,58 +350,82 @@ app.post('/api/exercises/:id/transition', requireRole(['instructor']), async (re
 
     const result = await queryDB(
       `UPDATE exercises SET status = $1, paused_at = $2, completed_at = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`,
-      [targetStatus, pausedAt, completedAt, id]
+      [targetStatus, pausedAt, completedAt, current.rows[0].id]
     );
 
-    res.json(result.rows[0]);
+    res.json(mapExerciseRow(result.rows[0]));
   } catch (err) {
     res.status(400).json({ error: 'State transition rejected', details: err.message });
   }
 });
 
-app.post('/api/exercises/:id/join', async (req, res) => {
+app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join', '/api/sessions/:id/join'], async (req, res) => {
   try {
-    const { id } = req.params;
-    const { displayName, role } = req.body;
+    const targetCodeOrId = (req.params.id || req.body.sessionCode || req.body.id || '').trim();
+    const { displayName, role, serviceId } = req.body;
 
-    const result = await queryDB('SELECT * FROM exercises WHERE id = $1 OR session_code = $1', [id]);
+    if (!targetCodeOrId) {
+      return res.status(400).json({ error: 'Please enter a valid Join Code.' });
+    }
+
+    const result = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [targetCodeOrId]
+    );
+
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Exercise session not found.' });
+      return res.status(404).json({ error: `Invalid Join Code "${targetCodeOrId}". Session not found in database.` });
     }
 
     const ex = result.rows[0];
     if (ex.status === 'Completed') {
-      return res.status(400).json({ error: 'Exercise session has already completed.' });
+      return res.status(400).json({ error: 'This exercise session has already completed.' });
     }
 
-    let participants = typeof ex.participants_json === 'string' ? JSON.parse(ex.participants_json) : ex.participants_json;
-    const existingIndex = participants.findIndex(p => p.serviceId === req.user.serviceId);
+    let participants = typeof ex.participants_json === 'string' ? JSON.parse(ex.participants_json) : (ex.participants_json || []);
+    const userServiceId = serviceId || req.user?.serviceId || `USER-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const existingIndex = participants.findIndex(p => p.serviceId === userServiceId);
 
     if (existingIndex >= 0) {
       participants[existingIndex].status = 'Online';
+      participants[existingIndex].displayName = displayName || participants[existingIndex].displayName || userServiceId;
       participants[existingIndex].role = role || participants[existingIndex].role;
     } else {
       if (participants.length >= ex.max_participants) {
-        return res.status(400).json({ error: 'Exercise participant capacity reached.' });
+        return res.status(400).json({ error: `Exercise participant capacity limit of ${ex.max_participants} reached.` });
       }
       participants.push({
         id: `p-${Date.now()}`,
-        serviceId: req.user.serviceId,
-        displayName: displayName || req.user.serviceId,
+        serviceId: userServiceId,
+        displayName: displayName || userServiceId,
         role: role || 'commander',
         status: 'Online',
         joinedAt: new Date().toISOString()
       });
     }
 
+    let newStatus = ex.status;
+    if (participants.length >= 2 && ex.status === 'Waiting') {
+      newStatus = 'Ready';
+    }
+
     const updated = await queryDB(
-      `UPDATE exercises SET participants_json = $1, participant_count = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *`,
-      [JSON.stringify(participants), participants.length, ex.id]
+      `UPDATE exercises SET participants_json = $1, participant_count = $2, status = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`,
+      [JSON.stringify(participants), participants.length, newStatus, ex.id]
     );
 
-    res.json(updated.rows[0]);
+    // Register in exercise_participants table
+    await queryDB(
+      `INSERT INTO exercise_participants (id, exercise_id, user_id, display_name, role, status)
+       VALUES ($1, $2, $3, $4, $5, 'Online')
+       ON CONFLICT (id) DO NOTHING`,
+      [`ep-${ex.id}-${userServiceId}`, ex.id, userServiceId, displayName || userServiceId, role || 'commander']
+    ).catch(() => {});
+
+    res.json(mapExerciseRow(updated.rows[0]));
   } catch (err) {
-    res.status(500).json({ error: 'Failed to join exercise', details: err.message });
+    res.status(500).json({ error: 'Failed to join exercise session', details: err.message });
   }
 });
 

@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { IndianFlag } from '../EmblemAndFlag';
 import { Search, Bell, User, Shield, ChevronDown, CheckCircle, X } from 'lucide-react';
 
 export const TopNav = ({ 
@@ -34,15 +33,10 @@ export const TopNav = ({
       }}
     >
       {/* Title & Page Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
         <h2 style={{ fontFamily: 'var(--font-family-serif)', fontSize: '20px', fontWeight: '800', color: 'var(--color-primary-navy)' }}>
           {currentTitle}
         </h2>
-        
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', background: '#F1F5F9', border: '1px solid #CBD5E1', padding: '3px 8px', borderRadius: '2px', color: '#475569', fontWeight: '600' }}>
-          <IndianFlag width={18} height={12} />
-          <span>GoI Training Simulator</span>
-        </div>
       </div>
 
       {/* Right Controls */}

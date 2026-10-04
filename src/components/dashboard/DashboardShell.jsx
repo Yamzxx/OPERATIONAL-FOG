@@ -39,15 +39,22 @@ export const DashboardShell = ({
 
   // Load persistent data & subscribe to real-time multiplayer engine
   useEffect(() => {
-    const refreshData = () => {
-      setScenarios(storageService.getScenarios());
+    const refreshData = async () => {
+      const scenariosList = await storageService.fetchScenarios();
+      setScenarios(scenariosList);
+
+      const remoteMP = await multiplayerEngine.fetchBackendSessions();
       const localSess = storageService.getSessions();
-      const mpSess = multiplayerEngine.getSessions();
       
-      // Combine sessions
-      const combined = [...mpSess, ...localSess.filter(ls => !mpSess.some(ms => ms.id === ls.id))];
-      setSessions(combined);
-      setAARS(storageService.getAARs());
+      const combinedMap = new Map();
+      [...remoteMP, ...localSess].forEach(s => {
+        const key = s.id || s.sessionCode;
+        if (key) combinedMap.set(key, s);
+      });
+      setSessions(Array.from(combinedMap.values()));
+
+      const aarsList = await storageService.fetchAARs();
+      setAARS(aarsList);
     };
 
     refreshData();
@@ -80,14 +87,14 @@ export const DashboardShell = ({
   const handleMultiplayerSessionCreated = (mpSession) => {
     setSessions(multiplayerEngine.getSessions());
     setActiveTrainingSession(mpSession);
-    setActiveScenario(mpSession.scenario || scenarios[0]);
+    setActiveScenario(mpSession.scenarioSnapshot || mpSession.scenario || scenarios[0]);
     setActiveView('training-room');
   };
 
   const handleJoinedSession = (joinedSession) => {
     setSessions(multiplayerEngine.getSessions());
     setActiveTrainingSession(joinedSession);
-    const scen = scenarios.find(s => s.id === joinedSession.scenarioId) || joinedSession.scenario || scenarios[0];
+    const scen = joinedSession.scenarioSnapshot || joinedSession.scenario || scenarios.find(s => s.id === joinedSession.scenarioId) || scenarios[0];
     setActiveScenario(scen);
     setActiveView('training-room');
   };

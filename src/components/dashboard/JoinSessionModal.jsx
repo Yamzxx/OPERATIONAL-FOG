@@ -13,19 +13,23 @@ export const JoinSessionModal = ({
   const [role, setRole] = useState('commander');
   const [errorMsg, setErrorMsg] = useState('');
 
+  const [isLoading, setIsLoading] = useState(false);
+
   if (!isOpen) return null;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
+    setIsLoading(true);
 
     if (!sessionCode.trim()) {
-      setErrorMsg('Please enter a valid 6-character Join Code.');
+      setErrorMsg('Please enter a valid Join Code.');
+      setIsLoading(false);
       return;
     }
 
     try {
-      const session = multiplayerEngine.joinSession(sessionCode.trim(), {
+      const session = await multiplayerEngine.joinSession(sessionCode.trim(), {
         serviceId: currentUser?.serviceId || `USER-${Math.floor(1000 + Math.random() * 9000)}`,
         displayName: displayName.trim(),
         role
@@ -34,7 +38,9 @@ export const JoinSessionModal = ({
       onJoinedSession(session);
       onClose();
     } catch (err) {
-      setErrorMsg(err.message || 'Failed to join session. Verify Join Code.');
+      setErrorMsg(err.message || 'Failed to join session. Please verify the Join Code.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -96,12 +102,12 @@ export const JoinSessionModal = ({
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #E2E8F0', paddingTop: '14px', marginTop: '16px' }}>
-            <button type="button" className="gov-btn gov-btn-secondary" onClick={onClose}>
+            <button type="button" className="gov-btn gov-btn-secondary" onClick={onClose} disabled={isLoading}>
               Cancel
             </button>
-            <button type="submit" className="gov-btn gov-btn-primary">
+            <button type="submit" className="gov-btn gov-btn-primary" disabled={isLoading}>
               <LogIn size={15} />
-              <span>Connect to Session</span>
+              <span>{isLoading ? 'Connecting to Session...' : 'Connect to Session'}</span>
             </button>
           </div>
         </form>

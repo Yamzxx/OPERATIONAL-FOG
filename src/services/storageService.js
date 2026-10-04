@@ -278,6 +278,22 @@ export const storageService = {
     }
   },
 
+  fetchScenarios: async () => {
+    if (typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${API_BASE_URL}/scenarios`);
+        if (res.ok) {
+          const list = await res.json();
+          if (Array.isArray(list) && list.length > 0) {
+            setItem(STORAGE_KEYS.SCENARIOS, JSON.stringify(list));
+            return list;
+          }
+        }
+      } catch (e) {}
+    }
+    return storageService.getScenarios();
+  },
+
   saveScenario: (newScenario) => {
     const list = storageService.getScenarios();
     const updated = [newScenario, ...list];
@@ -431,6 +447,22 @@ export const storageService = {
     } catch (e) {
       return DEFAULT_AARS;
     }
+  },
+
+  fetchAARs: async () => {
+    if (typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${API_BASE_URL}/aars`);
+        if (res.ok) {
+          const list = await res.json();
+          if (Array.isArray(list) && list.length > 0) {
+            setItem(STORAGE_KEYS.AARS, JSON.stringify(list));
+            return list;
+          }
+        }
+      } catch (e) {}
+    }
+    return storageService.getAARs();
   },
 
   saveAAR: (aarData) => {

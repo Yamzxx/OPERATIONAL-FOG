@@ -19,19 +19,23 @@ export const CreateMultiplayerModal = ({
 
   const selectedScenario = scenarios.find(s => s.id === selectedScenarioId) || scenarios[0];
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const session = multiplayerEngine.createSession({
-      scenario: selectedScenario,
-      sessionName: sessionName.trim() || `${selectedScenario.title.split('—')[1] || selectedScenario.title} Joint Session`,
-      maxParticipants,
-      creatorServiceId: currentUser?.serviceId || 'OPS-8842-IND',
-      creatorRole: currentUser?.role || 'instructor'
-    });
+    try {
+      const session = await multiplayerEngine.createSession({
+        scenario: selectedScenario,
+        sessionName: sessionName.trim() || `${selectedScenario?.title?.split('—')[1] || selectedScenario?.title || 'Joint'} Joint Session`,
+        maxParticipants,
+        creatorServiceId: currentUser?.serviceId || 'OPS-8842-IND',
+        creatorRole: currentUser?.role || 'instructor'
+      });
 
-    onSessionCreated(session);
-    onClose();
+      onSessionCreated(session);
+      onClose();
+    } catch (err) {
+      console.error('Failed to create multiplayer session:', err);
+    }
   };
 
   const copyCode = () => {

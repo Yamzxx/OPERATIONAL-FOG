@@ -20,6 +20,10 @@ export function generateSessionCode() {
   return code;
 }
 
+const API_BASE_URL = typeof process !== 'undefined' && process.env?.VITE_BACKEND_URL 
+  ? process.env.VITE_BACKEND_URL + '/api'
+  : 'http://localhost:4000/api';
+
 class MultiplayerEngine {
   constructor() {
     this.channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(CHANNEL_NAME) : null;
@@ -75,6 +79,31 @@ class MultiplayerEngine {
     }
   }
 
+  // Fetch latest sessions from backend database
+  async fetchBackendSessions() {
+    if (typeof fetch === 'undefined') return this.getSessions();
+    try {
+      const res = await fetch(`${API_BASE_URL}/exercises`);
+      if (res.ok) {
+        const remoteSessions = await res.json();
+        const localSessions = this.getSessions();
+        const mergedMap = new Map();
+        [...localSessions, ...remoteSessions].forEach(s => {
+          const key = s.id || s.sessionCode;
+          if (key) {
+            mergedMap.set(key, s);
+          }
+        });
+        const combined = Array.from(mergedMap.values());
+        this.saveSessions(combined);
+        return combined;
+      }
+    } catch (e) {
+      // Ignore network errors
+    }
+    return this.getSessions();
+  }
+
   // Save all sessions to storage
   saveSessions(sessions) {
     if (typeof localStorage !== 'undefined') {
@@ -87,12 +116,13 @@ class MultiplayerEngine {
   // Find session by code
   getSessionByCode(code) {
     if (!code) return null;
+    const cleanCode = code.toUpperCase().trim();
     const sessions = this.getSessions();
-    return sessions.find(s => s.sessionCode.toUpperCase() === code.toUpperCase().trim()) || null;
+    return sessions.find(s => s.sessionCode && s.sessionCode.toUpperCase() === cleanCode) || null;
   }
 
-  // Create new multiplayer session
-  createSession({ scenario, sessionName, maxParticipants = 6, creatorServiceId, creatorRole = 'instructor' }) {
+  // Create new multiplayer session (Backend Authoritative with Local Backup)
+  async createSession({ scenario, sessionName, maxParticipants = 6, creatorServiceId, creatorRole = 'instructor' }) {
     const sessions = this.getSessions();
     const sessionCode = generateSessionCode();
 
@@ -103,9 +133,10 @@ class MultiplayerEngine {
       scenarioId: scenario.id,
       scenarioTitle: scenario.title,
       scenario,
+      scenarioSnapshot: scenario,
       status: 'Waiting', // Waiting | Ready | In Progress | Completed
       maxParticipants: parseInt(maxParticipants, 10) || 6,
-      creator: creatorServiceId,
+      creator: creatorServiceId || 'OPS-8842-IND',
       createdAt: new Date().toISOString(),
       startedAt: null,
       endedAt: null,
@@ -114,8 +145,8 @@ class MultiplayerEngine {
       participants: [
         {
           id: `p-${Date.now()}`,
-          serviceId: creatorServiceId,
-          displayName: `${creatorServiceId} (Host)`,
+          serviceId: creatorServiceId || 'OPS-8842-IND',
+          displayName: `${creatorServiceId || 'OPS-8842-IND'} (Host)`,
           role: creatorRole,
           status: 'Online',
           joinedAt: new Date().toISOString()
@@ -125,35 +156,101 @@ class MultiplayerEngine {
       decisions: []
     };
 
+    // Save locally
     const updated = [newSession, ...sessions];
     this.saveSessions(updated);
     this.broadcast('SESSION_CREATED', { session: newSession });
+
+    // Persist to PostgreSQL backend database via REST API
+    if (typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${API_BASE_URL}/exercises`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-Service-Id': creatorServiceId || 'OPS-8842-IND',
+            'X-User-Role': creatorRole || 'instructor'
+          },
+          body: JSON.stringify(newSession)
+        });
+
+        if (res.ok) {
+          const apiSession = await res.json();
+          this.updateSession(apiSession);
+          return apiSession;
+        }
+      } catch (err) {
+        console.warn('Backend API offline, created session stored locally:', err.message);
+      }
+    }
+
     return newSession;
   }
 
-  // Join session by code
-  joinSession(sessionCode, { serviceId, displayName, role }) {
-    const session = this.getSessionByCode(sessionCode);
-    if (!session) {
-      throw new Error(`Session code "${sessionCode}" not found.`);
+  // Join session by code (Backend Authoritative with Local Fallback)
+  async joinSession(sessionCode, { serviceId, displayName, role }) {
+    const cleanCode = (sessionCode || '').toUpperCase().trim();
+    if (!cleanCode) {
+      throw new Error('Please enter a valid Join Code.');
     }
 
-    if (session.status === 'Completed') {
-      throw new Error('This exercise session has already ended.');
+    // First attempt REST API join against PostgreSQL database
+    if (typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(cleanCode)}/join`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-Service-Id': serviceId || 'GUEST-NODE',
+            'X-User-Role': role || 'commander'
+          },
+          body: JSON.stringify({
+            sessionCode: cleanCode,
+            displayName,
+            role,
+            serviceId
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || `Invalid Join Code "${cleanCode}". Session not found in database.`);
+        }
+
+        // Successfully joined via PostgreSQL backend
+        this.updateSession(data);
+        this.broadcast('PARTICIPANT_JOINED', { sessionCode: cleanCode, participant: { serviceId, displayName, role } });
+        return data;
+      } catch (err) {
+        // If server responded with an explicit status error (e.g. 404, 400), rethrow immediately
+        if (err.message && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
+          throw err;
+        }
+        console.warn('Backend API server offline during join, attempting local fallback:', err.message);
+      }
     }
 
-    // Check if participant already in session
-    const existingIndex = session.participants.findIndex(p => p.serviceId === serviceId);
+    // Local fallback if backend server is unreachable
+    const localSession = this.getSessionByCode(cleanCode);
+    if (!localSession) {
+      throw new Error(`Invalid Join Code "${cleanCode}". Session not found in database.`);
+    }
+
+    if (localSession.status === 'Completed') {
+      throw new Error('This exercise session has already completed.');
+    }
+
+    const existingIndex = localSession.participants.findIndex(p => p.serviceId === serviceId);
     if (existingIndex >= 0) {
-      session.participants[existingIndex].status = 'Online';
-      session.participants[existingIndex].displayName = displayName || serviceId;
-      session.participants[existingIndex].role = role || session.participants[existingIndex].role;
+      localSession.participants[existingIndex].status = 'Online';
+      localSession.participants[existingIndex].displayName = displayName || serviceId;
+      localSession.participants[existingIndex].role = role || localSession.participants[existingIndex].role;
     } else {
-      if (session.participants.length >= session.maxParticipants) {
-        throw new Error('Maximum participant capacity reached for this session.');
+      if (localSession.participants.length >= localSession.maxParticipants) {
+        throw new Error(`Exercise participant capacity limit of ${localSession.maxParticipants} reached for this session.`);
       }
 
-      session.participants.push({
+      localSession.participants.push({
         id: `p-${Date.now()}`,
         serviceId,
         displayName: displayName || serviceId,
@@ -163,20 +260,22 @@ class MultiplayerEngine {
       });
     }
 
-    // Update status to Ready if >= 2 participants
-    if (session.participants.length >= 2 && session.status === 'Waiting') {
-      session.status = 'Ready';
+    if (localSession.participants.length >= 2 && localSession.status === 'Waiting') {
+      localSession.status = 'Ready';
     }
 
-    this.updateSession(session);
-    this.broadcast('PARTICIPANT_JOINED', { sessionCode, participant: { serviceId, displayName, role } });
-    return session;
+    this.updateSession(localSession);
+    this.broadcast('PARTICIPANT_JOINED', { sessionCode: cleanCode, participant: { serviceId, displayName, role } });
+    return localSession;
   }
 
   // Update session record in storage and broadcast
   updateSession(updatedSession) {
     const sessions = this.getSessions();
-    const updated = sessions.map(s => s.id === updatedSession.id ? updatedSession : s);
+    const updated = sessions.map(s => (s.id === updatedSession.id || s.sessionCode === updatedSession.sessionCode) ? updatedSession : s);
+    if (!sessions.some(s => s.id === updatedSession.id || s.sessionCode === updatedSession.sessionCode)) {
+      updated.unshift(updatedSession);
+    }
     this.saveSessions(updated);
     this.broadcast('SESSION_UPDATED', { session: updatedSession });
     return updatedSession;
