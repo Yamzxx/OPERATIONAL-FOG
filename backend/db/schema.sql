@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS exercises (
   participants_json JSONB DEFAULT '[]'::jsonb,
   team_messages_json JSONB DEFAULT '[]'::jsonb,
   is_sample BOOLEAN DEFAULT FALSE,
+  elapsed_seconds INTEGER NOT NULL DEFAULT 0, -- Authoritative simulation clock value persisted on pause/end
   started_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   paused_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ,

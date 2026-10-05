@@ -160,20 +160,42 @@ export const DashboardShell = ({
     storageService.addDecision(sessionId, decisionData);
   };
 
-  const handleEndExercise = (session, decisions, durationMinutes, events = []) => {
+  const handleEndExercise = async (session, decisions, durationMinutes, events = []) => {
     // Clear the persisted active session on exercise completion
     sessionStorage.removeItem(ACTIVE_SESSION_KEY);
 
-    // Update session status
+    // Update session status in localStorage/multiplayer mesh
     if (session.sessionCode) {
       multiplayerEngine.endExercise(session.sessionCode);
     } else {
       storageService.updateSessionStatus(session.id, 'Completed');
     }
-    
+
     setSessions(multiplayerEngine.getSessions());
 
-    // Save AAR record
+    // Fetch the complete set of backend-persisted decisions before building the AAR.
+    // This ensures the AAR includes decisions from all participants, not just this browser.
+    let finalDecisions = decisions;
+    if (session.id) {
+      try {
+        const apiBase = (
+          typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+            ? import.meta.env.VITE_BACKEND_URL
+            : 'http://localhost:4000'
+        ) + '/api';
+        const res = await fetch(`${apiBase}/exercises/${session.id}/decisions`);
+        if (res.ok) {
+          const backendDecisions = await res.json();
+          if (Array.isArray(backendDecisions) && backendDecisions.length > 0) {
+            finalDecisions = backendDecisions;
+          }
+        }
+      } catch (e) {
+        // Fallback to in-memory decisions if backend is unavailable
+      }
+    }
+
+    // Save AAR record (local + optionally persist to backend via storageService)
     const newAAR = storageService.saveAAR({
       sessionId: session.id,
       sessionCode: session.sessionCode || session.id,
@@ -183,8 +205,8 @@ export const DashboardShell = ({
       startTime: session.createdAt,
       endTime: new Date().toISOString(),
       durationMinutes,
-      decisionsCount: decisions.length,
-      decisions,
+      decisionsCount: finalDecisions.length,
+      decisions: finalDecisions,
       events: events.length > 0 ? events : (activeScenario?.events || []),
       participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
     });
@@ -194,6 +216,7 @@ export const DashboardShell = ({
     setActiveScenario(null);
     setActiveView('aar');
   };
+
 
   const handleSaveInstructorNote = (aarId, noteText) => {
     const updated = storageService.saveAARNote(aarId, noteText);
@@ -308,9 +331,10 @@ export const DashboardShell = ({
               currentUser={currentUser}
               onSaveDecision={handleSaveDecision}
               onEndExercise={handleEndExercise}
-              existingDecisions={activeTrainingSession.decisions || storageService.getDecisionsForSession(activeTrainingSession.id)}
+              existingDecisions={activeTrainingSession.decisions || []}
             />
           )}
+
 
           {activeView === 'aar' && (
             <AfterActionReview 

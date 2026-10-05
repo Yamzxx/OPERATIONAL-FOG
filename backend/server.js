@@ -234,6 +234,7 @@ function mapExerciseRow(r) {
     scenarioSnapshot: snapshot,
     scenario: snapshot,
     status: r.status,
+    elapsedSeconds: r.elapsed_seconds || 0,
     participantCount: r.participant_count || participants.length,
     maxParticipants: r.max_participants || 6,
     instructorId: r.instructor_id,
@@ -361,7 +362,7 @@ app.post(['/api/exercises', '/api/sessions'], async (req, res) => {
 app.post('/api/exercises/:id/transition', requireRole(['instructor']), async (req, res) => {
   try {
     const { id } = req.params;
-    const { targetStatus } = req.body;
+    const { targetStatus, elapsedSeconds } = req.body;
 
     const current = await queryDB('SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)', [id]);
     if (current.rows.length === 0) {
@@ -373,15 +374,43 @@ app.post('/api/exercises/:id/transition', requireRole(['instructor']), async (re
 
     const completedAt = targetStatus === 'Completed' ? new Date().toISOString() : current.rows[0].completed_at;
     const pausedAt = targetStatus === 'Paused' ? new Date().toISOString() : null;
+    // Persist elapsed seconds when pausing or completing so refresh restores the correct clock
+    const persistedElapsed = (elapsedSeconds !== undefined && elapsedSeconds !== null)
+      ? parseInt(elapsedSeconds, 10)
+      : (current.rows[0].elapsed_seconds || 0);
 
     const result = await queryDB(
-      `UPDATE exercises SET status = $1, paused_at = $2, completed_at = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`,
-      [targetStatus, pausedAt, completedAt, current.rows[0].id]
+      `UPDATE exercises
+       SET status = $1, paused_at = $2, completed_at = $3, elapsed_seconds = $4, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5 RETURNING *`,
+      [targetStatus, pausedAt, completedAt, persistedElapsed, current.rows[0].id]
     );
 
     res.json(mapExerciseRow(result.rows[0]));
   } catch (err) {
     res.status(400).json({ error: 'State transition rejected', details: err.message });
+  }
+});
+
+// PATCH: Persist simulation clock (elapsed_seconds) without changing status.
+// Called periodically while the exercise is running so refresh can restore the clock.
+app.patch('/api/exercises/:id/elapsed', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { elapsedSeconds } = req.body;
+    if (elapsedSeconds === undefined || elapsedSeconds === null) {
+      return res.status(400).json({ error: 'elapsedSeconds is required.' });
+    }
+    const result = await queryDB(
+      `UPDATE exercises SET elapsed_seconds = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, elapsed_seconds, status`,
+      [parseInt(elapsedSeconds, 10), id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Exercise not found.' });
+    }
+    res.json({ id: result.rows[0].id, elapsedSeconds: result.rows[0].elapsed_seconds, status: result.rows[0].status });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to persist elapsed time', details: err.message });
   }
 });
 
@@ -530,7 +559,19 @@ app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async 
 // -------------------------------------------------------------
 app.get(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => {
   try {
-    const exerciseId = req.params.id || req.query.sessionId;
+    let exerciseId = req.params.id || req.query.sessionId;
+
+    // Resolve session_code to an actual exercise ID if needed
+    if (exerciseId) {
+      const idRes = await queryDB(
+        'SELECT id FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+        [exerciseId]
+      );
+      if (idRes.rows.length > 0) {
+        exerciseId = idRes.rows[0].id;
+      }
+    }
+
     let query = 'SELECT * FROM participant_decisions';
     let params = [];
     if (exerciseId) {
@@ -560,6 +601,7 @@ app.get(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => 
   }
 });
 
+
 app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => {
   try {
     const d = req.body;
@@ -568,12 +610,24 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
       return res.status(400).json({ error: 'Exercise ID, decision title, and rationale are required.' });
     }
 
+    // Guard: reject decision submissions after exercise is completed
+    const exCheck = await queryDB('SELECT status FROM exercises WHERE id = $1', [exerciseId]);
+    if (exCheck.rows.length > 0) {
+      const exStatus = exCheck.rows[0].status;
+      if (exStatus === 'Completed' || exStatus === 'Reviewed') {
+        return res.status(400).json({ error: 'Cannot submit decisions for a completed exercise session.' });
+      }
+    }
+
     const id = d.id || `dec-${Date.now()}`;
     const timestamp = d.timestamp || new Date().toISOString();
 
+    // ON CONFLICT (id) DO NOTHING provides idempotency: double-clicks or duplicate
+    // requests with the same decision ID will be silently ignored.
     const result = await queryDB(
       `INSERT INTO participant_decisions (id, exercise_id, title, rationale, confidence, elapsed_minutes, elapsed_time_formatted, submitted_by, submitted_role, timestamp)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (id) DO NOTHING
        RETURNING *`,
       [
         id,
@@ -589,11 +643,18 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
       ]
     );
 
+    // If DO NOTHING fired (duplicate), fetch and return the existing record
+    if (result.rows.length === 0) {
+      const existing = await queryDB('SELECT * FROM participant_decisions WHERE id = $1', [id]);
+      return res.status(200).json(existing.rows[0] || { id, exerciseId, duplicate: true });
+    }
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to log decision', details: err.message });
   }
 });
+
 
 // -------------------------------------------------------------
 // 6. AFTER-ACTION REVIEW (AAR) AUDIT REPORTS

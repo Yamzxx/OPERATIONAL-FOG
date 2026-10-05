@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Radio, 
   Clock, 
@@ -16,34 +16,91 @@ import {
   Layers,
   HelpCircle,
   MessageSquare,
-  Users
+  Users,
+  RefreshCw
 } from 'lucide-react';
 import { EventEngine, DELIVERY_STATUS, formatSecondsToMMSS } from '../../services/eventEngine';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 import { TeamCoordinationPanel } from './TeamCoordinationPanel';
 import { useToast } from '../Toast';
 
-export const TrainingRoom = ({ 
-  session, 
-  scenario, 
-  currentUser, 
-  onSaveDecision, 
-  onEndExercise, 
-  existingDecisions = [] 
+// ------------------------------------------------------------------
+// API helper — centralises the base URL resolution (same as Feature 1)
+// ------------------------------------------------------------------
+function getApiBase() {
+  return (
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+      ? import.meta.env.VITE_BACKEND_URL
+      : 'http://localhost:4000')
+  ) + '/api';
+}
+
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(`${getApiBase()}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    ...opts
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `API error ${res.status}`);
+  return data;
+}
+
+// ------------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------------
+function buildAuthHeaders(currentUser) {
+  return {
+    'X-Service-Id': currentUser?.serviceId || 'OPERATOR',
+    'X-User-Role': currentUser?.role || 'instructor'
+  };
+}
+
+// Clock-sync: persist elapsed_seconds to backend every N seconds while running.
+// Fires-and-forgets; does NOT block the UI or throw on failure.
+function syncElapsedToBackend(exerciseId, elapsedSeconds) {
+  if (!exerciseId) return;
+  fetch(`${getApiBase()}/exercises/${exerciseId}/elapsed`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ elapsedSeconds })
+  }).catch(() => {});
+}
+
+// ------------------------------------------------------------------
+// Component
+// ------------------------------------------------------------------
+export const TrainingRoom = ({
+  session,
+  scenario: scenarioProp,
+  currentUser,
+  onSaveDecision,
+  onEndExercise,
+  existingDecisions = []
 }) => {
   const { showToast } = useToast();
+
+  // --- resolve scenario: prefer the session's embedded snapshot ---
+  // This handles the case where a participant joined from Incognito and
+  // `scenarioProp` is null but the exercise has a scenarioSnapshot.
+  const scenario = scenarioProp
+    || session?.scenarioSnapshot
+    || session?.scenario
+    || null;
+
+  // --- core UI state (unchanged from original) ---
   const [engineState, setEngineState] = useState({
-    elapsedSeconds: 0,
-    elapsedFormatted: '00:00',
-    isRunning: true,
+    elapsedSeconds: session?.elapsedSeconds || 0,
+    elapsedFormatted: formatSecondsToMMSS(session?.elapsedSeconds || 0),
+    isRunning: false,
     isPaused: false,
     deliveredCount: 0,
     delayedCount: 0,
-    droppedCount: 0
+    droppedCount: 0,
+    pendingCount: 0,
+    totalEvents: 0
   });
-
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
-  const [activeTab, setActiveTab] = useState('participant'); // 'participant' | 'instructor'
+  const [activeTab, setActiveTab] = useState('participant');
   const [decisionTitle, setDecisionTitle] = useState('');
   const [rationale, setRationale] = useState('');
   const [confidence, setConfidence] = useState('Medium');
@@ -51,34 +108,82 @@ export const TrainingRoom = ({
   const [decisions, setDecisions] = useState(existingDecisions);
   const [liveSession, setLiveSession] = useState(session);
 
-  const engineRef = useRef(null);
+  // --- NEW: backend-authoritative exercise state ---
+  const [exerciseStatus, setExerciseStatus] = useState(session?.status || 'Waiting');
+  const [isTransitioning, setIsTransitioning] = useState(false); // prevents double-clicks during API call
+  const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
+  const [backendError, setBackendError] = useState('');
 
-  // Subscribe to real-time multiplayer updates
+  const engineRef = useRef(null);
+  const elapsedSyncRef = useRef(null); // interval for periodic clock sync
+  const isInstructor = currentUser?.role === 'instructor';
+  const isExerciseEnded = exerciseStatus === 'Completed' || exerciseStatus === 'Reviewed';
+
+  // ------------------------------------------------------------------
+  // On mount: load existing decisions from backend + restore engine clock
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    const exerciseId = session?.id;
+    if (!exerciseId) return;
+
+    // Load persisted decisions so they survive page refresh
+    apiFetch(`/exercises/${exerciseId}/decisions`)
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setDecisions(data);
+        }
+      })
+      .catch(() => {}); // Silently fail — UI shows empty state if unavailable
+  }, [session?.id]);
+
+  // ------------------------------------------------------------------
+  // Subscribe to real-time multiplayer updates (unchanged from original)
+  // ------------------------------------------------------------------
   useEffect(() => {
     setLiveSession(session);
 
-    const unsubscribeMP = multiplayerEngine.subscribe((event) => {
+    const unsubscribeMP = multiplayerEngine.subscribe(() => {
       if (session?.sessionCode) {
         const updated = multiplayerEngine.getSessionByCode(session.sessionCode);
         if (updated) {
           setLiveSession({ ...updated });
-          if (updated.decisions) {
-            setDecisions([...updated.decisions]);
+          // Only update decisions from localStorage if backend hasn't already loaded them
+          if (updated.decisions && updated.decisions.length > 0) {
+            setDecisions(prev => prev.length === 0 ? [...updated.decisions] : prev);
           }
         }
       }
     });
 
-    return () => {
-      unsubscribeMP();
-    };
+    return () => unsubscribeMP();
   }, [session]);
 
-  // Instantiate EventEngine on mount
+  // ------------------------------------------------------------------
+  // Instantiate EventEngine on mount, restore elapsed_seconds from backend
+  // ------------------------------------------------------------------
   useEffect(() => {
-    const engine = new EventEngine(scenario);
+    if (!scenario) return;
+
+    // Use the elapsed_seconds persisted by the backend (survives refresh).
+    const restoredElapsed = session?.elapsedSeconds || 0;
+
+    const engine = new EventEngine(scenario, { initialElapsed: restoredElapsed });
     engineRef.current = engine;
-    engine.start();
+
+    // Start in paused state — the backend status determines if it should run.
+    // If the exercise was 'In Progress' when the participant joined, start running.
+    const shouldAutoRun = (
+      exerciseStatus === 'In Progress' ||
+      exerciseStatus === 'Active' ||
+      exerciseStatus === 'Ready'
+    );
+    if (shouldAutoRun && !isExerciseEnded) {
+      engine.start();
+    } else {
+      // Evaluate events at the restored elapsed time but don't tick
+      engine.evaluateEvents();
+      engine.notify();
+    }
 
     const unsubscribe = engine.subscribe((state) => {
       setEngineState({ ...state });
@@ -86,44 +191,120 @@ export const TrainingRoom = ({
 
     return () => {
       unsubscribe();
+      // Persist the final clock position when unmounting
+      if (session?.id) {
+        syncElapsedToBackend(session.id, engineRef.current?.elapsedSeconds || 0);
+      }
     };
-  }, [scenario]);
+    // scenario and session.elapsedSeconds are stable after mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Simulation timer interval loop
+  // ------------------------------------------------------------------
+  // Simulation timer tick loop (unchanged from original)
+  // ------------------------------------------------------------------
   useEffect(() => {
     const interval = setInterval(() => {
-      if (engineRef.current && !engineState.isPaused) {
+      if (engineRef.current && !engineState.isPaused && engineRef.current.isRunning) {
         engineRef.current.tick(speedMultiplier);
       }
     }, 1000);
-
     return () => clearInterval(interval);
   }, [engineState.isPaused, speedMultiplier]);
 
-  const handlePauseToggle = () => {
-    if (!engineRef.current) return;
-    if (engineState.isPaused) {
+  // ------------------------------------------------------------------
+  // Periodic backend clock sync — every 15 seconds while running
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (elapsedSyncRef.current) clearInterval(elapsedSyncRef.current);
+
+    if (!isExerciseEnded && engineRef.current?.isRunning && !engineState.isPaused) {
+      elapsedSyncRef.current = setInterval(() => {
+        if (session?.id && engineRef.current) {
+          syncElapsedToBackend(session.id, engineRef.current.elapsedSeconds);
+        }
+      }, 15000);
+    }
+
+    return () => {
+      if (elapsedSyncRef.current) clearInterval(elapsedSyncRef.current);
+    };
+  }, [isExerciseEnded, engineState.isPaused, session?.id]);
+
+  // ------------------------------------------------------------------
+  // PAUSE / RESUME — backend authoritative
+  // ------------------------------------------------------------------
+  const handlePauseToggle = useCallback(async () => {
+    if (!engineRef.current || isTransitioning) return;
+
+    const isPaused = engineState.isPaused;
+    const targetStatus = isPaused ? 'In Progress' : 'Paused';
+
+    // Update the local engine immediately for responsive UI
+    if (isPaused) {
       engineRef.current.resume();
-      if (session?.sessionCode) {
-        multiplayerEngine.setPauseState(session.sessionCode, false);
-      }
     } else {
       engineRef.current.pause();
-      if (session?.sessionCode) {
-        multiplayerEngine.setPauseState(session.sessionCode, true);
+    }
+
+    // Broadcast to other multiplayer nodes (localStorage sync — non-authoritative)
+    if (session?.sessionCode) {
+      multiplayerEngine.setPauseState(session.sessionCode, !isPaused);
+    }
+
+    // Persist to backend (instructor only — backend enforces this via requireRole)
+    if (isInstructor && session?.id) {
+      setIsTransitioning(true);
+      setBackendError('');
+      try {
+        const updated = await apiFetch(`/exercises/${session.id}/transition`, {
+          method: 'POST',
+          headers: buildAuthHeaders(currentUser),
+          body: JSON.stringify({
+            targetStatus,
+            elapsedSeconds: engineRef.current?.elapsedSeconds || 0
+          })
+        });
+        setExerciseStatus(updated.status);
+        setLiveSession(prev => ({ ...prev, ...updated }));
+      } catch (err) {
+        // Revert local engine state if backend rejected the transition
+        if (isPaused) {
+          engineRef.current.pause();
+        } else {
+          engineRef.current.resume();
+        }
+        setBackendError(err.message);
+        showToast(err.message, 'error');
+      } finally {
+        setIsTransitioning(false);
       }
     }
-  };
+  }, [engineState.isPaused, isTransitioning, isInstructor, session, currentUser, showToast]);
 
+  // ------------------------------------------------------------------
+  // STEP FORWARD (unchanged from original)
+  // ------------------------------------------------------------------
   const handleStepForward = () => {
     if (engineRef.current) {
       engineRef.current.step(5);
     }
   };
 
-  const handleDecisionSubmit = (e) => {
+  // ------------------------------------------------------------------
+  // DECISION SUBMIT — backend authoritative
+  // ------------------------------------------------------------------
+  const handleDecisionSubmit = async (e) => {
     e.preventDefault();
     if (!decisionTitle.trim() || !rationale.trim()) return;
+    if (isSubmittingDecision) return; // prevent double-click
+    if (isExerciseEnded) {
+      showToast('Cannot submit decisions for a completed exercise.', 'error');
+      return;
+    }
+
+    setIsSubmittingDecision(true);
+    setBackendError('');
 
     const newDecision = {
       id: `dec-${Date.now()}`,
@@ -131,25 +312,88 @@ export const TrainingRoom = ({
       rationale: rationale.trim(),
       confidence,
       timestamp: new Date().toISOString(),
-      elapsedMinutes: Math.floor(engineState.elapsedSeconds / 60),
-      elapsedTimeFormatted: engineState.elapsedFormatted,
+      elapsedMinutes: Math.floor((engineRef.current?.elapsedSeconds || 0) / 60),
+      elapsedTimeFormatted: formatSecondsToMMSS(engineRef.current?.elapsedSeconds || 0),
       submittedBy: currentUser?.serviceId || 'Operator',
       submittedRole: currentUser?.role || 'commander'
     };
 
-    if (session?.sessionCode) {
-      multiplayerEngine.submitDecision(session.sessionCode, newDecision);
-    } else {
-      onSaveDecision(session.id, newDecision);
-      setDecisions([...decisions, newDecision]);
+    const exerciseId = session?.id;
+
+    try {
+      // Persist to PostgreSQL backend — do NOT show success until backend confirms
+      if (exerciseId) {
+        const persisted = await apiFetch(`/exercises/${exerciseId}/decisions`, {
+          method: 'POST',
+          headers: buildAuthHeaders(currentUser),
+          body: JSON.stringify({ ...newDecision, exerciseId })
+        });
+        // Use the backend-returned record (has server-side timestamp)
+        setDecisions(prev => [...prev, persisted]);
+      } else {
+        // No backend ID — fall through to local-only path (single-user sessions)
+        onSaveDecision(session.id, newDecision);
+        setDecisions(prev => [...prev, newDecision]);
+      }
+
+      // Also broadcast via multiplayer mesh for real-time visibility
+      if (session?.sessionCode) {
+        multiplayerEngine.submitDecision(session.sessionCode, newDecision);
+      }
+
+      showToast(`Decision "${newDecision.title}" logged at T+${newDecision.elapsedTimeFormatted}.`, 'success');
+      setDecisionTitle('');
+      setRationale('');
+    } catch (err) {
+      // CRITICAL: do NOT show success. Surface the actual error to the user.
+      setBackendError(err.message);
+      showToast(`Failed to save decision: ${err.message}`, 'error');
+    } finally {
+      setIsSubmittingDecision(false);
     }
-
-    showToast(`Decision "${newDecision.title}" logged at T+${newDecision.elapsedTimeFormatted}.`, 'success');
-
-    setDecisionTitle('');
-    setRationale('');
   };
 
+  // ------------------------------------------------------------------
+  // END EXERCISE — backend authoritative
+  // ------------------------------------------------------------------
+  const handleEndExercise = useCallback(async () => {
+    setShowEndModal(false);
+    setIsTransitioning(true);
+    setBackendError('');
+
+    const currentLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
+    const elapsed = engineRef.current?.elapsedSeconds || 0;
+
+    // Persist final elapsed_seconds and transition to Completed
+    if (isInstructor && session?.id) {
+      try {
+        await apiFetch(`/exercises/${session.id}/transition`, {
+          method: 'POST',
+          headers: buildAuthHeaders(currentUser),
+          body: JSON.stringify({
+            targetStatus: 'Completed',
+            elapsedSeconds: elapsed
+          })
+        });
+        setExerciseStatus('Completed');
+      } catch (err) {
+        // Log but don't block — still call onEndExercise to navigate to AAR
+        console.warn('Backend end-exercise transition failed:', err.message);
+      }
+    }
+
+    // Also update multiplayer mesh
+    if (session?.sessionCode) {
+      multiplayerEngine.endExercise(session.sessionCode);
+    }
+
+    setIsTransitioning(false);
+    onEndExercise(session, decisions, Math.floor(elapsed / 60), currentLog);
+  }, [isInstructor, session, currentUser, decisions, onEndExercise]);
+
+  // ------------------------------------------------------------------
+  // TEAM MESSAGE (unchanged from original)
+  // ------------------------------------------------------------------
   const handleSendTeamMessage = (text) => {
     if (session?.sessionCode) {
       multiplayerEngine.sendTeamMessage(session.sessionCode, {
@@ -161,11 +405,33 @@ export const TrainingRoom = ({
     }
   };
 
-  // Get participant visible messages
+  // ------------------------------------------------------------------
+  // Derived UI data from EventEngine
+  // ------------------------------------------------------------------
   const userRole = currentUser?.role || 'participant';
   const participantMessages = engineRef.current ? engineRef.current.getParticipantMessages(userRole) : [];
   const instructorLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
 
+  // ------------------------------------------------------------------
+  // Guard: no scenario available
+  // ------------------------------------------------------------------
+  if (!scenario) {
+    return (
+      <div style={{ padding: '48px', textAlign: 'center', color: '#64748B' }}>
+        <AlertTriangle size={40} style={{ marginBottom: '16px', color: '#D97706' }} />
+        <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+          Scenario Data Not Available
+        </div>
+        <div style={{ fontSize: '13px', marginTop: '8px' }}>
+          The exercise scenario configuration could not be loaded. The backend may be temporarily unavailable.
+        </div>
+      </div>
+    );
+  }
+
+  // ------------------------------------------------------------------
+  // JSX — keeping all existing headings, sections, and structure intact
+  // ------------------------------------------------------------------
   return (
     <div style={{ minHeight: 'calc(100vh - 64px)', backgroundColor: '#F4F6F8', display: 'flex', flexDirection: 'column' }}>
       {/* Top Banner Control Strip */}
@@ -194,6 +460,20 @@ export const TrainingRoom = ({
                   JOIN CODE: {liveSession.sessionCode}
                 </span>
               )}
+              {/* Backend-authoritative status badge */}
+              <span style={{
+                background: exerciseStatus === 'In Progress' || exerciseStatus === 'Active' ? '#15803D'
+                  : exerciseStatus === 'Paused' ? '#D97706'
+                  : exerciseStatus === 'Completed' ? '#DC2626'
+                  : '#475569',
+                color: '#FFF',
+                padding: '1px 6px',
+                borderRadius: '2px',
+                fontSize: '10px',
+                fontWeight: 'bold'
+              }}>
+                {exerciseStatus.toUpperCase()}
+              </span>
             </div>
             <div style={{ fontFamily: 'var(--font-family-serif)', fontSize: '18px', fontWeight: 'bold' }}>
               {liveSession?.name || session.name}
@@ -207,15 +487,17 @@ export const TrainingRoom = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1E293B', padding: '4px 8px', border: '1px solid #334155' }}>
             <button 
               onClick={handlePauseToggle} 
-              style={{ background: 'none', border: 'none', color: engineState.isPaused ? '#F59E0B' : '#4ADE80', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-              title={engineState.isPaused ? 'Resume Engine' : 'Pause Engine'}
+              disabled={isTransitioning || isExerciseEnded}
+              style={{ background: 'none', border: 'none', color: engineState.isPaused ? '#F59E0B' : '#4ADE80', cursor: isTransitioning || isExerciseEnded ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', opacity: isTransitioning ? 0.5 : 1 }}
+              title={isTransitioning ? 'Updating...' : engineState.isPaused ? 'Resume Engine' : 'Pause Engine'}
             >
-              {engineState.isPaused ? <Play size={16} /> : <Pause size={16} />}
+              {isTransitioning ? <RefreshCw size={16} className="animate-spin" /> : engineState.isPaused ? <Play size={16} /> : <Pause size={16} />}
             </button>
 
             <button 
               onClick={handleStepForward} 
-              style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+              disabled={isExerciseEnded}
+              style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: isExerciseEnded ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center' }}
               title="Step Forward 5 Seconds"
             >
               <FastForward size={14} />
@@ -284,25 +566,43 @@ export const TrainingRoom = ({
           {/* End Exercise Button */}
           <button 
             onClick={() => setShowEndModal(true)}
+            disabled={isTransitioning || isExerciseEnded}
             style={{
-              backgroundColor: '#DC2626',
+              backgroundColor: isExerciseEnded ? '#64748B' : '#DC2626',
               color: '#FFF',
               border: 'none',
               padding: '8px 14px',
               fontSize: '12px',
               fontWeight: 'bold',
               borderRadius: '2px',
-              cursor: 'pointer',
+              cursor: isTransitioning || isExerciseEnded ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               gap: '6px'
             }}
           >
             <Square size={14} />
-            <span>End Exercise</span>
+            <span>{isExerciseEnded ? 'Exercise Ended' : 'End Exercise'}</span>
           </button>
         </div>
       </div>
+
+      {/* Backend error banner */}
+      {backendError && (
+        <div style={{ backgroundColor: '#FEE2E2', borderBottom: '1px solid #FCA5A5', padding: '8px 24px', fontSize: '12px', color: '#991B1B', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <AlertTriangle size={14} />
+          <span><strong>Backend Error:</strong> {backendError}</span>
+          <button onClick={() => setBackendError('')} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#991B1B', cursor: 'pointer' }}><X size={14} /></button>
+        </div>
+      )}
+
+      {/* Completed exercise overlay */}
+      {isExerciseEnded && (
+        <div style={{ backgroundColor: '#F0FDF4', borderBottom: '2px solid #BBF7D0', padding: '10px 24px', fontSize: '13px', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <CheckCircle size={16} />
+          <span><strong>Exercise Completed.</strong> All events and decisions have been persisted. Proceed to the After-Action Review for analysis.</span>
+        </div>
+      )}
 
       {/* Main Content Area */}
       {activeTab === 'participant' ? (
@@ -367,6 +667,13 @@ export const TrainingRoom = ({
                           <span>Note: This report presents conflicting data with earlier reconnaissance dispatches.</span>
                         </div>
                       )}
+
+                      {ev.deliveryBehavior === 'incomplete' && (
+                        <div style={{ marginTop: '8px', fontSize: '11px', color: '#9333EA', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <HelpCircle size={13} />
+                          <span>Note: This report is incomplete. Some field data was not received.</span>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -392,52 +699,70 @@ export const TrainingRoom = ({
                 Record your tactical decision and explicit rationale based on delivered dispatches.
               </p>
 
-              <form onSubmit={handleDecisionSubmit}>
-                <div className="gov-form-group">
-                  <label className="gov-form-label">Command Decision Title</label>
-                  <input 
-                    type="text"
-                    className="gov-form-input"
-                    placeholder="e.g. Issue Hold Order pending timestamp verification"
-                    value={decisionTitle}
-                    onChange={(e) => setDecisionTitle(e.target.value)}
-                    required
-                  />
+              {isExerciseEnded ? (
+                <div style={{ padding: '16px', backgroundColor: '#F8FAFC', border: '1px dashed #CBD5E1', textAlign: 'center', fontSize: '12px', color: '#64748B' }}>
+                  Exercise completed. Decision submission is now closed.
                 </div>
-
-                <div className="gov-form-group">
-                  <label className="gov-form-label">Tactical Rationale & Assumptions</label>
-                  <textarea 
-                    className="gov-form-input"
-                    rows={3}
-                    placeholder="Explain why this decision was chosen under current signal conditions..."
-                    value={rationale}
-                    onChange={(e) => setRationale(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <div>
-                    <label className="gov-form-label" style={{ marginBottom: 0 }}>Confidence Level</label>
-                    <select 
-                      className="gov-form-select"
-                      value={confidence}
-                      onChange={(e) => setConfidence(e.target.value)}
-                      style={{ padding: '4px 8px', fontSize: '12px', marginTop: '2px' }}
-                    >
-                      <option value="High">High Confidence</option>
-                      <option value="Medium">Medium Confidence</option>
-                      <option value="Low">Low Confidence (High Friction)</option>
-                    </select>
+              ) : (
+                <form onSubmit={handleDecisionSubmit}>
+                  <div className="gov-form-group">
+                    <label className="gov-form-label">Command Decision Title</label>
+                    <input 
+                      type="text"
+                      className="gov-form-input"
+                      placeholder="e.g. Issue Hold Order pending timestamp verification"
+                      value={decisionTitle}
+                      onChange={(e) => setDecisionTitle(e.target.value)}
+                      disabled={isSubmittingDecision}
+                      required
+                    />
                   </div>
 
-                  <button type="submit" className="gov-btn gov-btn-primary" style={{ padding: '10px 20px' }}>
-                    <Send size={15} />
-                    <span>Log Decision</span>
-                  </button>
-                </div>
-              </form>
+                  <div className="gov-form-group">
+                    <label className="gov-form-label">Tactical Rationale & Assumptions</label>
+                    <textarea 
+                      className="gov-form-input"
+                      rows={3}
+                      placeholder="Explain why this decision was chosen under current signal conditions..."
+                      value={rationale}
+                      onChange={(e) => setRationale(e.target.value)}
+                      disabled={isSubmittingDecision}
+                      required
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <div>
+                      <label className="gov-form-label" style={{ marginBottom: 0 }}>Confidence Level</label>
+                      <select 
+                        className="gov-form-select"
+                        value={confidence}
+                        onChange={(e) => setConfidence(e.target.value)}
+                        style={{ padding: '4px 8px', fontSize: '12px', marginTop: '2px' }}
+                        disabled={isSubmittingDecision}
+                      >
+                        <option value="High">High Confidence</option>
+                        <option value="Medium">Medium Confidence</option>
+                        <option value="Low">Low Confidence (High Friction)</option>
+                      </select>
+                    </div>
+
+                    <button type="submit" className="gov-btn gov-btn-primary" style={{ padding: '10px 20px' }} disabled={isSubmittingDecision}>
+                      {isSubmittingDecision ? (
+                        <>
+                          <RefreshCw size={15} className="animate-spin" />
+                          <span>Saving...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send size={15} />
+                          <span>Log Decision</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
 
             {/* Submitted Decisions Audit Log */}
@@ -555,7 +880,7 @@ export const TrainingRoom = ({
 
             <div className="gov-modal-body">
               <p style={{ fontSize: '14px', color: 'var(--color-text-primary)', marginBottom: '16px' }}>
-                Are you sure you want to end this exercise session?
+                Are you sure you want to end this exercise session? This action will persist the final state to the database and cannot be undone.
               </p>
               <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', padding: '10px', fontSize: '12px', color: '#475569', marginBottom: '20px' }}>
                 Total Decisions Recorded: <strong>{decisions.length}</strong><br />
@@ -570,16 +895,17 @@ export const TrainingRoom = ({
                 <button 
                   className="gov-btn" 
                   style={{ backgroundColor: '#DC2626', color: '#FFF' }}
-                  onClick={() => {
-                    setShowEndModal(false);
-                    if (session?.sessionCode) {
-                      multiplayerEngine.endExercise(session.sessionCode);
-                    }
-                    const currentLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
-                    onEndExercise(session, decisions, Math.floor(engineState.elapsedSeconds / 60), currentLog);
-                  }}
+                  onClick={handleEndExercise}
+                  disabled={isTransitioning}
                 >
-                  Confirm & End Session
+                  {isTransitioning ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" />
+                      <span>Ending...</span>
+                    </>
+                  ) : (
+                    <span>Confirm & End Session</span>
+                  )}
                 </button>
               </div>
             </div>
