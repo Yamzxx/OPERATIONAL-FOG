@@ -895,54 +895,237 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
 // -------------------------------------------------------------
 // 6. AFTER-ACTION REVIEW (AAR) AUDIT REPORTS
 // -------------------------------------------------------------
+
+// Helper: map an aars DB row → frontend camelCase shape
+function mapAARRow(r) {
+  return {
+    id: r.id,
+    exerciseId: r.exercise_id,
+    sessionId: r.session_id || r.exercise_id,
+    sessionCode: r.session_code,
+    sessionName: r.session_name,
+    scenarioTitle: r.scenario_title,
+    creator: r.creator,
+    startTime: r.start_time,
+    endTime: r.end_time,
+    durationMinutes: r.duration_minutes,
+    decisionsCount: r.decisions_count,
+    instructorNotes: r.instructor_notes || '',
+    decisions: typeof r.decisions_json === 'string' ? JSON.parse(r.decisions_json) : (r.decisions_json || []),
+    events: typeof r.events_json === 'string' ? JSON.parse(r.events_json) : (r.events_json || []),
+    participants: typeof r.participants_json === 'string' ? JSON.parse(r.participants_json) : (r.participants_json || []),
+    scenarioSnapshot: typeof r.scenario_snapshot_json === 'string' ? JSON.parse(r.scenario_snapshot_json) : (r.scenario_snapshot_json || {}),
+    isSample: r.is_sample,
+    createdAt: r.created_at
+  };
+}
+
+// GET /api/aars — index of all AAR records (for the AAR list panel)
 app.get('/api/aars', async (req, res) => {
   try {
     const result = await queryDB('SELECT * FROM aars ORDER BY created_at DESC');
-    const aars = result.rows.map(r => ({
-      id: r.id,
-      exerciseId: r.exercise_id,
-      sessionId: r.session_id || r.exercise_id,
-      sessionCode: r.session_code,
-      sessionName: r.session_name,
-      scenarioTitle: r.scenario_title,
-      creator: r.creator,
-      startTime: r.start_time,
-      endTime: r.end_time,
-      durationMinutes: r.duration_minutes,
-      decisionsCount: r.decisions_count,
-      instructorNotes: r.instructor_notes,
-      decisions: typeof r.decisions_json === 'string' ? JSON.parse(r.decisions_json) : r.decisions_json,
-      events: typeof r.events_json === 'string' ? JSON.parse(r.events_json) : r.events_json,
-      participants: typeof r.participants_json === 'string' ? JSON.parse(r.participants_json) : r.participants_json,
-      scenarioSnapshot: typeof r.scenario_snapshot_json === 'string' ? JSON.parse(r.scenario_snapshot_json) : r.scenario_snapshot_json,
-      isSample: r.is_sample,
-      createdAt: r.created_at
-    }));
-    res.json(aars);
+    res.json(result.rows.map(mapAARRow));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch AAR records', details: err.message });
   }
 });
 
+// GET /api/aars/exercise/:exerciseId — generate a live, authoritative AAR from PostgreSQL.
+// Fetches data from: exercises, participant_decisions, communication_events.
+// Upserts the result into the aars table (one AAR per exercise — idempotent).
+// This is the primary Feature 5 endpoint called when an exercise is completed.
+app.get('/api/aars/exercise/:exerciseId', async (req, res) => {
+  try {
+    const { exerciseId } = req.params;
+
+    // Resolve by ID or session_code
+    const exRes = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [exerciseId]
+    );
+    if (exRes.rows.length === 0) {
+      return res.status(404).json({ error: `Exercise "${exerciseId}" not found.` });
+    }
+    const ex = exRes.rows[0];
+
+    // 1. Live decisions from participant_decisions table
+    const decRes = await queryDB(
+      'SELECT * FROM participant_decisions WHERE exercise_id = $1 ORDER BY timestamp ASC',
+      [ex.id]
+    );
+    const decisions = decRes.rows.map(mapDecisionRow);
+
+    // 2. Live communication events from communication_events table
+    const evRes = await queryDB(
+      'SELECT * FROM communication_events WHERE exercise_id = $1 ORDER BY scheduled_time_sec ASC',
+      [ex.id]
+    );
+    const events = evRes.rows.map(r => ({
+      ...mapEventRow(r),
+      scheduledTimeFormatted: formatSecondsToMMSS(r.scheduled_time_sec),
+      actualDeliveryTimeFormatted: formatSecondsToMMSS(r.actual_delivery_time_sec)
+    }));
+
+    // 3. Scenario snapshot, participants from exercise record
+    const snapshot = typeof ex.scenario_snapshot_json === 'string'
+      ? JSON.parse(ex.scenario_snapshot_json)
+      : (ex.scenario_snapshot_json || {});
+    const participants = typeof ex.participants_json === 'string'
+      ? JSON.parse(ex.participants_json)
+      : (ex.participants_json || []);
+
+    // 4. Authoritative timing — use persisted exercise timestamps + elapsed_seconds
+    const startTime = ex.created_at;
+    const endTime = ex.completed_at || new Date().toISOString();
+    const elapsedSec = ex.elapsed_seconds || 0;
+    const durationMinutes = Math.max(1, Math.round(elapsedSec / 60));
+
+    // 5. Degradation analysis derived from persisted records — no hardcoding
+    const commStats = {
+      total: events.length,
+      delivered: events.filter(e => e.status === 'DELIVERED').length,
+      delayed: events.filter(e => e.deliveryBehavior === 'delayed').length,
+      dropped: events.filter(e => e.status === 'DROPPED').length,
+      incomplete: events.filter(e => e.deliveryBehavior === 'incomplete').length,
+      conflicting: events.filter(e => e.deliveryBehavior === 'conflicting').length,
+      pending: events.filter(e => e.status === 'PENDING').length
+    };
+
+    // Upsert into aars table — one AAR per exercise, idempotent
+    const existingAAR = await queryDB(
+      'SELECT id, instructor_notes FROM aars WHERE exercise_id = $1 OR id = $2',
+      [ex.id, `aar-${ex.id}`]
+    );
+
+    let aarId;
+    let preservedNotes = '';
+
+    if (existingAAR.rows.length > 0) {
+      aarId = existingAAR.rows[0].id;
+      preservedNotes = existingAAR.rows[0].instructor_notes || '';
+      // Update — preserve instructor notes, refresh everything else from live records
+      await queryDB(
+        `UPDATE aars SET
+           session_code = $1, session_name = $2, scenario_title = $3,
+           end_time = $4, duration_minutes = $5, decisions_count = $6,
+           decisions_json = $7, events_json = $8, participants_json = $9,
+           scenario_snapshot_json = $10
+         WHERE id = $11`,
+        [
+          ex.session_code, ex.name, ex.scenario_title,
+          endTime, durationMinutes, decisions.length,
+          JSON.stringify(decisions), JSON.stringify(events),
+          JSON.stringify(participants), JSON.stringify(snapshot),
+          aarId
+        ]
+      );
+    } else {
+      aarId = `aar-${ex.id}`;
+      await queryDB(
+        `INSERT INTO aars
+           (id, exercise_id, session_id, session_code, session_name, scenario_title, creator,
+            start_time, end_time, duration_minutes, decisions_count, instructor_notes,
+            decisions_json, events_json, participants_json, scenario_snapshot_json, is_sample)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          aarId, ex.id, ex.id, ex.session_code, ex.name, ex.scenario_title, ex.creator,
+          startTime, endTime, durationMinutes, decisions.length, '',
+          JSON.stringify(decisions), JSON.stringify(events),
+          JSON.stringify(participants), JSON.stringify(snapshot),
+          ex.is_sample || false
+        ]
+      );
+    }
+
+    res.json({
+      id: aarId,
+      exerciseId: ex.id,
+      sessionId: ex.id,
+      sessionCode: ex.session_code,
+      sessionName: ex.name,
+      scenarioTitle: ex.scenario_title,
+      creator: ex.creator,
+      startTime,
+      endTime,
+      durationMinutes,
+      decisionsCount: decisions.length,
+      instructorNotes: preservedNotes,
+      decisions,
+      events,
+      participants,
+      scenarioSnapshot: snapshot,
+      commStats,
+      isSample: ex.is_sample || false
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate AAR', details: err.message });
+  }
+});
+
+// GET /api/aars/:id — single AAR with live-enriched decisions and events
+app.get('/api/aars/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const aarRes = await queryDB('SELECT * FROM aars WHERE id = $1', [id]);
+    if (aarRes.rows.length === 0) {
+      return res.status(404).json({ error: 'AAR not found.' });
+    }
+    const base = mapAARRow(aarRes.rows[0]);
+
+    // Enrich with live records if an exercise_id is linked
+    if (base.exerciseId) {
+      const [decRes, evRes] = await Promise.all([
+        queryDB('SELECT * FROM participant_decisions WHERE exercise_id = $1 ORDER BY timestamp ASC', [base.exerciseId]),
+        queryDB('SELECT * FROM communication_events WHERE exercise_id = $1 ORDER BY scheduled_time_sec ASC', [base.exerciseId])
+      ]);
+      if (decRes.rows.length > 0) base.decisions = decRes.rows.map(mapDecisionRow);
+      if (evRes.rows.length > 0) base.events = evRes.rows.map(r => ({
+        ...mapEventRow(r),
+        scheduledTimeFormatted: formatSecondsToMMSS(r.scheduled_time_sec),
+        actualDeliveryTimeFormatted: formatSecondsToMMSS(r.actual_delivery_time_sec)
+      }));
+    }
+
+    res.json(base);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch AAR', details: err.message });
+  }
+});
+
+// POST /api/aars — create/update AAR from payload (used by storageService.saveAAR).
+// ON CONFLICT (id) DO UPDATE prevents duplicate AARs on double-click or reconnect.
 app.post('/api/aars', async (req, res) => {
   try {
     const a = req.body;
-    const id = a.id || `aar-${Date.now()}`;
+    const exerciseId = a.exerciseId || a.sessionId || null;
+    const id = a.id || (exerciseId ? `aar-${exerciseId}` : `aar-${Date.now()}`);
+
     const result = await queryDB(
-      `INSERT INTO aars (id, exercise_id, session_id, session_code, session_name, scenario_title, creator, start_time, end_time, duration_minutes, decisions_count, instructor_notes, decisions_json, events_json, participants_json, scenario_snapshot_json, is_sample)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      `INSERT INTO aars
+         (id, exercise_id, session_id, session_code, session_name, scenario_title, creator,
+          start_time, end_time, duration_minutes, decisions_count, instructor_notes,
+          decisions_json, events_json, participants_json, scenario_snapshot_json, is_sample)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (id) DO UPDATE SET
+         end_time = EXCLUDED.end_time,
+         duration_minutes = EXCLUDED.duration_minutes,
+         decisions_count = EXCLUDED.decisions_count,
+         decisions_json = EXCLUDED.decisions_json,
+         events_json = EXCLUDED.events_json,
+         participants_json = EXCLUDED.participants_json
        RETURNING *`,
       [
         id,
-        a.exerciseId || a.sessionId || null,
-        a.sessionId || a.exerciseId || null,
+        exerciseId,
+        a.sessionId || exerciseId,
         a.sessionCode || null,
-        a.sessionName,
-        a.scenarioTitle,
-        a.creator || req.user.serviceId,
+        a.sessionName || 'Unnamed Exercise',
+        a.scenarioTitle || 'Unknown Scenario',
+        a.creator || req.user?.serviceId || 'SYSTEM',
         a.startTime || new Date().toISOString(),
         a.endTime || new Date().toISOString(),
-        a.durationMinutes || 45,
+        a.durationMinutes || 0,
         a.decisionsCount || (a.decisions || []).length,
         a.instructorNotes || '',
         JSON.stringify(a.decisions || []),
@@ -953,28 +1136,30 @@ app.post('/api/aars', async (req, res) => {
       ]
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(mapAARRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: 'Failed to create AAR audit record', details: err.message });
   }
 });
 
+// PATCH /api/aars/:id/note — instructor saves debrief notes
 app.patch('/api/aars/:id/note', requireRole(['instructor']), async (req, res) => {
   try {
     const { id } = req.params;
     const { noteText } = req.body;
     const result = await queryDB(
-      `UPDATE aars SET instructor_notes = $1 WHERE id = $2 RETURNING *`,
-      [noteText, id]
+      'UPDATE aars SET instructor_notes = $1 WHERE id = $2 RETURNING *',
+      [noteText || '', id]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'AAR record not found.' });
     }
-    res.json(result.rows[0]);
+    res.json(mapAARRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: 'Failed to update AAR note', details: err.message });
   }
 });
+
 
 // Automatic startup database migration & retry loop
 async function startServer() {

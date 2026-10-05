@@ -62,6 +62,17 @@ export const AfterActionReview = ({
   const participants = selectedAAR?.participants || [
     { displayName: selectedAAR?.creator || 'Operator', role: 'commander' }
   ];
+  // commStats is populated by the backend /api/aars/exercise/:id endpoint from real records.
+  // Fall back to counting from the events array if not present (e.g. sample AARs).
+  const commStats = selectedAAR?.commStats || {
+    total: events.length,
+    delivered: events.filter(e => e.status === 'DELIVERED' || e.deliveryBehavior === 'normal').length,
+    delayed: events.filter(e => e.deliveryBehavior === 'delayed').length,
+    dropped: events.filter(e => e.status === 'DROPPED' || e.deliveryBehavior === 'dropped').length,
+    incomplete: events.filter(e => e.deliveryBehavior === 'incomplete').length,
+    conflicting: events.filter(e => e.deliveryBehavior === 'conflicting').length,
+    pending: events.filter(e => e.status === 'PENDING').length
+  };
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -240,7 +251,7 @@ export const AfterActionReview = ({
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', backgroundColor: '#F8FAFC', padding: '16px', border: '1px solid #CBD5E1' }}>
                   <div>
                     <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>EXERCISE DURATION</div>
-                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>{selectedAAR.durationMinutes || 45} mins</div>
+                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>{selectedAAR.durationMinutes || 'N/A'} mins</div>
                   </div>
 
                   <div>
@@ -255,8 +266,34 @@ export const AfterActionReview = ({
 
                   <div>
                     <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>SIMULATION EVENTS</div>
-                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-terracotta)' }}>{events.length || 4} Dispatches</div>
+                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-terracotta)' }}>{commStats.total} Dispatches</div>
                   </div>
+
+                  {/* Degradation breakdown row — all values from commStats derived from real DB records */}
+                  {commStats.total > 0 && (
+                    <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #E2E8F0', paddingTop: '10px', display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#15803D' }}>{commStats.delivered}</strong> Delivered
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#D97706' }}>{commStats.delayed}</strong> Delayed
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#DC2626' }}>{commStats.dropped}</strong> Dropped
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#7C3AED' }}>{commStats.incomplete}</strong> Incomplete
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#0369A1' }}>{commStats.conflicting}</strong> Conflicting
+                      </span>
+                      {commStats.pending > 0 && (
+                        <span style={{ fontSize: '11px', color: '#64748B' }}>
+                          <strong style={{ color: '#94A3B8' }}>{commStats.pending}</strong> Pending
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Submitted Decisions Table */}
@@ -380,14 +417,17 @@ export const AfterActionReview = ({
                     {events.map((ev, i) => (
                       <div key={ev.id || i} style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', padding: '12px', fontSize: '12px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-                          <span>[{ev.time || '00:00'}] {ev.title}</span>
-                          <span style={{ textTransform: 'uppercase', color: ev.deliveryBehavior === 'dropped' ? '#DC2626' : '#15803D' }}>
-                            {ev.deliveryBehavior || 'delivered'}
+                          <span>[{ev.scheduledTimeFormatted || ev.time || '00:00'}] {ev.title}</span>
+                          <span style={{ textTransform: 'uppercase', color: ev.status === 'DROPPED' || ev.deliveryBehavior === 'dropped' ? '#DC2626' : '#15803D' }}>
+                            {ev.deliveryBehavior || ev.status || 'delivered'}
                           </span>
                         </div>
                         <div style={{ color: '#334155', marginTop: '4px' }}>{ev.content}</div>
                       </div>
                     ))}
+                    {events.length === 0 && (
+                      <div style={{ padding: '16px', fontSize: '13px', color: '#64748B' }}>No communication events recorded for this exercise.</div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -400,6 +440,9 @@ export const AfterActionReview = ({
                   Scheduled vs Actual Telemetry Delivery Audit
                 </h4>
 
+                {events.length === 0 ? (
+                  <div style={{ padding: '16px', fontSize: '13px', color: '#64748B' }}>No communication events recorded for this exercise.</div>
+                ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1', textAlign: 'left' }}>
@@ -408,20 +451,34 @@ export const AfterActionReview = ({
                       <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Target Role</th>
                       <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Scheduled</th>
                       <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Actual Delivery</th>
+                      <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {events.map((ev, i) => (
-                      <tr key={ev.id || i} style={{ borderBottom: '1px solid #E2E8F0' }}>
-                        <td style={{ padding: '8px 10px', fontWeight: 'bold' }}>{ev.title}</td>
-                        <td style={{ padding: '8px 10px', textTransform: 'uppercase' }}>{ev.deliveryBehavior || 'normal'}</td>
-                        <td style={{ padding: '8px 10px' }}>{ev.recipientRole || 'all'}</td>
-                        <td style={{ padding: '8px 10px' }}>{ev.time || '00:00'}</td>
-                        <td style={{ padding: '8px 10px' }}>{ev.deliveryBehavior === 'dropped' ? 'UNDELIVERED (DROPPED)' : (ev.time || '00:00')}</td>
-                      </tr>
-                    ))}
+                    {events.map((ev, i) => {
+                      const statusColor = ev.status === 'DROPPED' ? '#DC2626'
+                        : ev.status === 'DELAYED' ? '#D97706'
+                        : ev.status === 'DELIVERED' ? '#15803D'
+                        : '#94A3B8';
+                      return (
+                        <tr key={ev.id || i} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                          <td style={{ padding: '8px 10px', fontWeight: 'bold' }}>{ev.title}</td>
+                          <td style={{ padding: '8px 10px', textTransform: 'uppercase' }}>{ev.deliveryBehavior || 'normal'}</td>
+                          <td style={{ padding: '8px 10px' }}>{ev.intendedRecipient || ev.recipientRole || 'all'}</td>
+                          <td style={{ padding: '8px 10px' }}>{ev.scheduledTimeFormatted || ev.time || '00:00'}</td>
+                          <td style={{ padding: '8px 10px' }}>
+                            {ev.status === 'DROPPED' ? 'UNDELIVERED (DROPPED)'
+                              : (ev.actualDeliveryTimeFormatted || ev.scheduledTimeFormatted || ev.time || '00:00')}
+                          </td>
+                          <td style={{ padding: '8px 10px', fontWeight: 'bold', color: statusColor }}>
+                            {ev.status || (ev.deliveryBehavior === 'dropped' ? 'DROPPED' : 'DELIVERED')}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
+                )}
               </div>
             )}
           </div>

@@ -72,8 +72,24 @@ export const DashboardShell = ({
       });
       setSessions(Array.from(combinedMap.values()));
 
-      const aarsList = await storageService.fetchAARs();
-      setAARS(aarsList);
+      // AARs — always prefer backend; fall back to localStorage only if backend is unreachable
+      const apiBase = (
+        typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+          ? import.meta.env.VITE_BACKEND_URL
+          : 'http://localhost:4000'
+      ) + '/api';
+      try {
+        const aarRes = await fetch(`${apiBase}/aars`);
+        if (aarRes.ok) {
+          const backendAARs = await aarRes.json();
+          setAARS(backendAARs);
+        } else {
+          setAARS(storageService.getAARs());
+        }
+      } catch (_) {
+        setAARS(storageService.getAARs());
+      }
+
     };
 
     refreshData();
@@ -164,64 +180,87 @@ export const DashboardShell = ({
     // Clear the persisted active session on exercise completion
     sessionStorage.removeItem(ACTIVE_SESSION_KEY);
 
-    // Update session status in localStorage/multiplayer mesh
+    // Update session status in multiplayer mesh
     if (session.sessionCode) {
       multiplayerEngine.endExercise(session.sessionCode);
     } else {
       storageService.updateSessionStatus(session.id, 'Completed');
     }
-
     setSessions(multiplayerEngine.getSessions());
 
-    // Fetch the complete set of backend-persisted decisions before building the AAR.
-    // This ensures the AAR includes decisions from all participants, not just this browser.
-    let finalDecisions = decisions;
+    const apiBase = (
+      typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+        ? import.meta.env.VITE_BACKEND_URL
+        : 'http://localhost:4000'
+    ) + '/api';
+
+    // Primary path: call the authoritative AAR generation endpoint.
+    // GET /api/aars/exercise/:exerciseId reads participant_decisions +
+    // communication_events from PostgreSQL and upserts a complete AAR record.
+    let liveAAR = null;
     if (session.id) {
       try {
-        const apiBase = (
-          typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
-            ? import.meta.env.VITE_BACKEND_URL
-            : 'http://localhost:4000'
-        ) + '/api';
-        const res = await fetch(`${apiBase}/exercises/${session.id}/decisions`);
-        if (res.ok) {
-          const backendDecisions = await res.json();
-          if (Array.isArray(backendDecisions) && backendDecisions.length > 0) {
-            finalDecisions = backendDecisions;
-          }
+        const aarRes = await fetch(`${apiBase}/aars/exercise/${session.id}`);
+        if (aarRes.ok) {
+          liveAAR = await aarRes.json();
         }
-      } catch (e) {
-        // Fallback to in-memory decisions if backend is unavailable
-      }
+      } catch (e) { /* backend unreachable */ }
     }
 
-    // Save AAR record (local + optionally persist to backend via storageService)
-    const newAAR = storageService.saveAAR({
-      sessionId: session.id,
-      sessionCode: session.sessionCode || session.id,
-      sessionName: session.name,
-      scenarioTitle: session.scenarioTitle,
-      creator: session.creator || currentUser?.serviceId,
-      startTime: session.createdAt,
-      endTime: new Date().toISOString(),
-      durationMinutes,
-      decisionsCount: finalDecisions.length,
-      decisions: finalDecisions,
-      events: events.length > 0 ? events : (activeScenario?.events || []),
-      participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
-    });
+    if (liveAAR) {
+      // Backend returned an authoritative AAR — cache it locally so the AAR panel
+      // loads instantly even if the backend is slow on the next visit.
+      const existing = storageService.getAARs();
+      const withoutStale = existing.filter(a => a.id !== liveAAR.id && a.exerciseId !== session.id);
+      const cached = [liveAAR, ...withoutStale];
+      try { localStorage.setItem('op_fog_aars_v1', JSON.stringify(cached)); } catch (_) {}
+      setAARS(cached);
+    } else {
+      // Fallback: build AAR from in-memory data when backend is unreachable
+      storageService.saveAAR({
+        sessionId: session.id,
+        exerciseId: session.id,
+        sessionCode: session.sessionCode || session.id,
+        sessionName: session.name,
+        scenarioTitle: session.scenarioTitle,
+        creator: session.creator || currentUser?.serviceId,
+        startTime: session.createdAt,
+        endTime: new Date().toISOString(),
+        durationMinutes,
+        decisionsCount: decisions.length,
+        decisions,
+        events,
+        participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
+      });
+      setAARS(storageService.getAARs());
+    }
 
-    setAARS(storageService.getAARs());
     setActiveTrainingSession(null);
     setActiveScenario(null);
     setActiveView('aar');
   };
 
 
-  const handleSaveInstructorNote = (aarId, noteText) => {
+
+  const handleSaveInstructorNote = async (aarId, noteText) => {
+    // Persist to PostgreSQL first — backend is authoritative for instructor notes
+    const apiBase = (
+      typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+        ? import.meta.env.VITE_BACKEND_URL
+        : 'http://localhost:4000'
+    ) + '/api';
+    try {
+      await fetch(`${apiBase}/aars/${aarId}/note`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteText })
+      });
+    } catch (_) {}
+    // Update localStorage cache so the note appears immediately without a round-trip
     const updated = storageService.saveAARNote(aarId, noteText);
     setAARS(updated);
   };
+
 
   const getPageTitle = () => {
     switch (activeView) {
