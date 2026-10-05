@@ -7,8 +7,10 @@ import {
   validateStateTransition, 
   evaluateScenarioEvents, 
   filterParticipantMessages, 
-  DELIVERY_STATUS 
+  DELIVERY_STATUS,
+  formatSecondsToMMSS
 } from './services/simulationEngine.js';
+
 
 const { Pool } = pg;
 
@@ -492,30 +494,193 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
   }
 });
 
+// ------------------------------------------------------------------
+// Helper: derive a stable VARCHAR(64) event ID from exercise + scenario event
+// ------------------------------------------------------------------
+function stableEventId(exerciseId, ev, index) {
+  const evId = ev.id || `ev-${index + 1}`;
+  return `evt-${exerciseId}-${evId}`.substring(0, 64);
+}
+
+// ------------------------------------------------------------------
+// Helper: map a communication_events DB row to the shape expected by the frontend
+// ------------------------------------------------------------------
+function mapEventRow(r) {
+  return {
+    id: r.id,
+    exerciseId: r.exercise_id,
+    title: r.title,
+    content: r.content,
+    type: r.event_type,
+    deliveryBehavior: r.delivery_behavior,
+    recipientRole: r.recipient_role,
+    scheduledTimeSec: r.scheduled_time_sec,
+    delaySeconds: r.delay_seconds,
+    actualDeliveryTimeSec: r.actual_delivery_time_sec,
+    scheduledTimeFormatted: formatSecondsToMMSS(r.scheduled_time_sec),
+    actualDeliveryTimeFormatted: formatSecondsToMMSS(r.actual_delivery_time_sec),
+    status: r.status,
+    deliveredToParticipant: r.status === 'DELIVERED',
+    instructorNotes: r.instructor_notes || '',
+    conflictsWithId: r.conflicts_with_id || null,
+    incompleteFields: r.incomplete_fields || null,
+    createdAt: r.created_at
+  };
+}
+
+// ------------------------------------------------------------------
+// Helper: persist a single evaluated event into communication_events.
+// Idempotent — ON CONFLICT only upgrades status (PENDING → DELAYED → DELIVERED/DROPPED).
+// ------------------------------------------------------------------
+async function persistEventState(exerciseId, ev, index) {
+  const evId = stableEventId(exerciseId, ev, index);
+  await queryDB(
+    `INSERT INTO communication_events
+       (id, exercise_id, title, content, event_type, delivery_behavior, recipient_role,
+        scheduled_time_sec, delay_seconds, actual_delivery_time_sec, status, instructor_notes,
+        conflicts_with_id, incomplete_fields)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     ON CONFLICT (id) DO UPDATE SET
+       status = EXCLUDED.status,
+       actual_delivery_time_sec = EXCLUDED.actual_delivery_time_sec`,
+    [
+      evId,
+      exerciseId,
+      (ev.title || '').substring(0, 500),
+      (ev.content || ev.messageContent || '').substring(0, 5000),
+      (ev.type || 'info').substring(0, 32),
+      (ev.deliveryBehavior || 'normal').substring(0, 32),
+      (ev.recipientRole || ev.intendedRecipient || 'all').substring(0, 32),
+      ev.scheduledTimeSec || 0,
+      ev.delaySeconds || 0,
+      ev.actualDeliveryTimeSec || 0,
+      ev.status || 'PENDING',
+      (ev.instructorNotes || '').substring(0, 2000),
+      ev.conflictsWithId ? String(ev.conflictsWithId).substring(0, 64) : null,
+      ev.incompleteFields ? String(ev.incompleteFields).substring(0, 128) : null
+    ]
+  );
+}
+
 // -------------------------------------------------------------
 // 4. AUTHORITATIVE SIMULATION & PARTICIPANT MESSAGE DISPATCHES
 // -------------------------------------------------------------
-app.get('/api/exercises/:id/messages', async (req, res) => {
+
+// POST: Idempotently seed all scenario events into communication_events as PENDING.
+// Called once when a participant/instructor first enters the Training Room.
+// Safe to call multiple times — ON CONFLICT (id) DO NOTHING prevents duplicates.
+app.post('/api/exercises/:id/events/seed', async (req, res) => {
   try {
     const { id } = req.params;
-    const { elapsedSeconds, role } = req.query;
-
-    const exRes = await queryDB('SELECT * FROM exercises WHERE id = $1 OR session_code = $1', [id]);
+    const exRes = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [id]
+    );
     if (exRes.rows.length === 0) {
       return res.status(404).json({ error: 'Exercise not found.' });
     }
-
     const ex = exRes.rows[0];
-    const snapshot = typeof ex.scenario_snapshot_json === 'string' ? JSON.parse(ex.scenario_snapshot_json) : ex.scenario_snapshot_json;
-    const elapsed = parseInt(elapsedSeconds || '0', 10);
+    const snapshot = typeof ex.scenario_snapshot_json === 'string'
+      ? JSON.parse(ex.scenario_snapshot_json)
+      : ex.scenario_snapshot_json;
 
-    const evaluatedEvents = evaluateScenarioEvents(snapshot.events || [], elapsed);
-    const userRole = role || req.user.role || 'commander';
+    const scenarioEvents = snapshot?.events || [];
+
+    // Evaluate at elapsed=0 to get the base structure (scheduledTimeSec etc.)
+    // then insert as PENDING — status will be updated on subsequent message polls.
+    const baseEvents = evaluateScenarioEvents(scenarioEvents, 0);
+    let seeded = 0;
+    for (let i = 0; i < baseEvents.length; i++) {
+      const ev = { ...baseEvents[i], status: 'PENDING' };
+      const evId = stableEventId(ex.id, ev, i);
+      const result = await queryDB(
+        `INSERT INTO communication_events
+           (id, exercise_id, title, content, event_type, delivery_behavior, recipient_role,
+            scheduled_time_sec, delay_seconds, actual_delivery_time_sec, status,
+            instructor_notes, conflicts_with_id, incomplete_fields)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          evId,
+          ex.id,
+          (ev.title || '').substring(0, 500),
+          (ev.content || ev.messageContent || '').substring(0, 5000),
+          (ev.type || 'info').substring(0, 32),
+          (ev.deliveryBehavior || 'normal').substring(0, 32),
+          (ev.recipientRole || ev.intendedRecipient || 'all').substring(0, 32),
+          ev.scheduledTimeSec || 0,
+          ev.delaySeconds || 0,
+          ev.actualDeliveryTimeSec || 0,
+          'PENDING',
+          (ev.instructorNotes || '').substring(0, 2000),
+          ev.conflictsWithId ? String(ev.conflictsWithId).substring(0, 64) : null,
+          ev.incompleteFields ? String(ev.incompleteFields).substring(0, 128) : null
+        ]
+      );
+      if (result.rowCount > 0) seeded++;
+    }
+
+    res.json({
+      exerciseId: ex.id,
+      totalScenarioEvents: scenarioEvents.length,
+      seeded,
+      alreadyPresent: scenarioEvents.length - seeded
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to seed scenario events', details: err.message });
+  }
+});
+
+// GET: Authoritative participant message dispatch.
+// Uses DB elapsed_seconds as the clock — not the browser-supplied value.
+// Lazily persists every evaluated DELIVERED/DROPPED event into communication_events.
+// Participant visibility is enforced server-side: dropped events are NEVER returned.
+app.get('/api/exercises/:id/messages', async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Accept role from header (auth middleware) or query param (cross-origin participant)
+    const roleFromQuery = req.query.role;
+
+    const exRes = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [id]
+    );
+    if (exRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Exercise not found.' });
+    }
+    const ex = exRes.rows[0];
+
+    const snapshot = typeof ex.scenario_snapshot_json === 'string'
+      ? JSON.parse(ex.scenario_snapshot_json)
+      : ex.scenario_snapshot_json;
+
+    // --- AUTHORITATIVE CLOCK: use the DB's elapsed_seconds, not a browser value ---
+    const elapsed = ex.elapsed_seconds || 0;
+    const userRole = roleFromQuery || req.user?.role || 'commander';
+
+    // Evaluate all scenario events deterministically at the authoritative elapsed time
+    const scenarioEvents = snapshot?.events || [];
+    const evaluatedEvents = evaluateScenarioEvents(scenarioEvents, elapsed);
+
+    // Lazily persist events that have reached a terminal state.
+    // ON CONFLICT DO UPDATE ensures the status column is always current;
+    // it never inserts a duplicate row.
+    const persistPromises = evaluatedEvents.map((ev, i) => {
+      if (ev.status === DELIVERY_STATUS.DELIVERED || ev.status === DELIVERY_STATUS.DROPPED || ev.status === DELIVERY_STATUS.DELAYED) {
+        return persistEventState(ex.id, ev, i).catch(() => {}); // fire-and-forget; do not fail the response
+      }
+      return Promise.resolve();
+    });
+    await Promise.all(persistPromises);
+
+    // Server-side role filter — dropped messages are NEVER included for participants.
     const authorizedMessages = filterParticipantMessages(evaluatedEvents, userRole);
 
     res.json({
       exerciseId: ex.id,
       elapsedSeconds: elapsed,
+      isPaused: ex.status === 'Paused',
+      isCompleted: ex.status === 'Completed' || ex.status === 'Reviewed',
       userRole,
       messages: authorizedMessages
     });
@@ -524,35 +689,70 @@ app.get('/api/exercises/:id/messages', async (req, res) => {
   }
 });
 
+// GET: Instructor audit log — full event schedule including PENDING, DELAYED, DROPPED.
+// Uses DB elapsed_seconds as the authoritative clock.
+// For active exercises: evaluates from scenario snapshot.
+// For completed exercises: reads persisted communication_events rows.
 app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async (req, res) => {
   try {
     const { id } = req.params;
-    const { elapsedSeconds } = req.query;
 
-    const exRes = await queryDB('SELECT * FROM exercises WHERE id = $1 OR session_code = $1', [id]);
+    const exRes = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [id]
+    );
     if (exRes.rows.length === 0) {
       return res.status(404).json({ error: 'Exercise not found.' });
     }
-
     const ex = exRes.rows[0];
-    const snapshot = typeof ex.scenario_snapshot_json === 'string' ? JSON.parse(ex.scenario_snapshot_json) : ex.scenario_snapshot_json;
-    const elapsed = parseInt(elapsedSeconds || '0', 10);
 
-    const evaluatedEvents = evaluateScenarioEvents(snapshot.events || [], elapsed);
+    const isFinished = ex.status === 'Completed' || ex.status === 'Reviewed';
+
+    let events;
+
+    if (isFinished) {
+      // For completed exercises, read the persisted communication_events table.
+      // This is the permanent authoritative record for the AAR.
+      const evRes = await queryDB(
+        'SELECT * FROM communication_events WHERE exercise_id = $1 ORDER BY scheduled_time_sec ASC',
+        [ex.id]
+      );
+      events = evRes.rows.map(r => ({
+        ...mapEventRow(r),
+        scheduledTimeFormatted: formatSecondsToMMSS(r.scheduled_time_sec),
+        actualDeliveryTimeFormatted: formatSecondsToMMSS(r.actual_delivery_time_sec)
+      }));
+    } else {
+      // For active/paused exercises: evaluate from snapshot at current DB elapsed time.
+      const elapsed = ex.elapsed_seconds || 0;
+      const snapshot = typeof ex.scenario_snapshot_json === 'string'
+        ? JSON.parse(ex.scenario_snapshot_json)
+        : ex.scenario_snapshot_json;
+      const scenarioEvents = snapshot?.events || [];
+      const raw = evaluateScenarioEvents(scenarioEvents, elapsed);
+      events = raw.map(ev => ({
+        ...ev,
+        scheduledTimeFormatted: formatSecondsToMMSS(ev.scheduledTimeSec || 0),
+        actualDeliveryTimeFormatted: formatSecondsToMMSS(ev.actualDeliveryTimeSec || 0)
+      }));
+    }
 
     res.json({
       exerciseId: ex.id,
-      elapsedSeconds: elapsed,
-      totalEvents: evaluatedEvents.length,
-      deliveredCount: evaluatedEvents.filter(e => e.status === DELIVERY_STATUS.DELIVERED).length,
-      delayedCount: evaluatedEvents.filter(e => e.status === DELIVERY_STATUS.DELAYED).length,
-      droppedCount: evaluatedEvents.filter(e => e.status === DELIVERY_STATUS.DROPPED).length,
-      events: evaluatedEvents
+      elapsedSeconds: ex.elapsed_seconds || 0,
+      status: ex.status,
+      totalEvents: events.length,
+      deliveredCount: events.filter(e => e.status === DELIVERY_STATUS.DELIVERED).length,
+      delayedCount: events.filter(e => e.status === DELIVERY_STATUS.DELAYED).length,
+      droppedCount: events.filter(e => e.status === DELIVERY_STATUS.DROPPED).length,
+      pendingCount: events.filter(e => e.status === DELIVERY_STATUS.PENDING).length,
+      events
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch instructor audit log', details: err.message });
   }
 });
+
 
 // -------------------------------------------------------------
 // 5. COMMAND DECISIONS LOGGING

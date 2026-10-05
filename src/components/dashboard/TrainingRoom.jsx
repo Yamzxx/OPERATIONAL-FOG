@@ -116,8 +116,14 @@ export const TrainingRoom = ({
 
   const engineRef = useRef(null);
   const elapsedSyncRef = useRef(null); // interval for periodic clock sync
+  const pollRef = useRef(null);         // interval for backend event polling
   const isInstructor = currentUser?.role === 'instructor';
   const isExerciseEnded = exerciseStatus === 'Completed' || exerciseStatus === 'Reviewed';
+
+  // Backend-authoritative event list (participant-visible messages from server)
+  const [backendMessages, setBackendMessages] = useState([]);
+  // Full instructor log from backend (includes PENDING, DELAYED, DROPPED)
+  const [backendInstructorLog, setBackendInstructorLog] = useState([]);
 
   // ------------------------------------------------------------------
   // On mount: load existing decisions from backend + restore engine clock
@@ -134,7 +140,84 @@ export const TrainingRoom = ({
         }
       })
       .catch(() => {}); // Silently fail — UI shows empty state if unavailable
-  }, [session?.id]);
+
+    // ------------------------------------------------------------------
+    // Seed scenario events into communication_events (idempotent).
+    // This is safe to call on every mount — ON CONFLICT (id) DO NOTHING
+    // means the DB is only written on first visit; subsequent calls are no-ops.
+    // ------------------------------------------------------------------
+    apiFetch(`/exercises/${exerciseId}/events/seed`, {
+      method: 'POST',
+      headers: buildAuthHeaders(currentUser)
+    }).catch(() => {}); // Failure is non-blocking
+  }, [session?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ------------------------------------------------------------------
+  // Poll the backend for authoritative event state.
+  // Called immediately on mount and every POLL_INTERVAL_MS thereafter.
+  // Merges results into backendMessages / backendInstructorLog state.
+  // This is what makes the engine cross-browser authoritative:
+  //   Browser A instructor ticks the clock → DB elapsed_seconds updates →
+  //   Browser B participant polls → receives same events without any WS.
+  // ------------------------------------------------------------------
+  const POLL_INTERVAL_MS = 8000;
+
+  const pollBackendEvents = useCallback(async () => {
+    if (!session?.id || isExerciseEnded) return;
+    const userRole = currentUser?.role || 'commander';
+    try {
+      // Participant messages (server enforces visibility — dropped events excluded)
+      const msgData = await apiFetch(
+        `/exercises/${session.id}/messages?role=${encodeURIComponent(userRole)}`,
+        { headers: buildAuthHeaders(currentUser) }
+      );
+      if (Array.isArray(msgData.messages)) {
+        setBackendMessages(msgData.messages);
+      }
+      // Sync backend status changes (e.g. instructor paused from another browser)
+      if (msgData.isPaused && !engineState.isPaused && engineRef.current?.isRunning) {
+        engineRef.current.pause();
+      }
+      if (!msgData.isPaused && engineState.isPaused && engineRef.current?.isRunning) {
+        engineRef.current.resume();
+      }
+      if (msgData.isCompleted) {
+        setExerciseStatus('Completed');
+      }
+    } catch (_) {}
+
+    // Instructor also polls the full audit log
+    if (isInstructor) {
+      try {
+        const logData = await apiFetch(
+          `/exercises/${session.id}/instructor-log`,
+          { headers: buildAuthHeaders(currentUser) }
+        );
+        if (Array.isArray(logData.events)) {
+          setBackendInstructorLog(logData.events);
+        }
+      } catch (_) {}
+    }
+  }, [session?.id, isExerciseEnded, isInstructor, currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mount: immediate first poll (don't wait 8 s for first load)
+  useEffect(() => {
+    if (!session?.id) return;
+    const timer = setTimeout(pollBackendEvents, 800); // slight delay to let seed complete
+    return () => clearTimeout(timer);
+  }, [session?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Recurring poll — only while exercise is active
+  useEffect(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (!isExerciseEnded && session?.id) {
+      pollRef.current = setInterval(pollBackendEvents, POLL_INTERVAL_MS);
+    }
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [isExerciseEnded, session?.id, pollBackendEvents]);
+
 
   // ------------------------------------------------------------------
   // Subscribe to real-time multiplayer updates (unchanged from original)
@@ -361,7 +444,12 @@ export const TrainingRoom = ({
     setIsTransitioning(true);
     setBackendError('');
 
-    const currentLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
+    // Stop the polling interval immediately — exercise is ending
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+
     const elapsed = engineRef.current?.elapsedSeconds || 0;
 
     // Persist final elapsed_seconds and transition to Completed
@@ -382,14 +470,20 @@ export const TrainingRoom = ({
       }
     }
 
+    // Use the backend instructor log for the AAR (authoritative persisted record).
+    // Fall back to local engine log only if backend hasn't loaded yet.
+    const localLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
+    const finalEventLog = backendInstructorLog.length > 0 ? backendInstructorLog : localLog;
+
     // Also update multiplayer mesh
     if (session?.sessionCode) {
       multiplayerEngine.endExercise(session.sessionCode);
     }
 
     setIsTransitioning(false);
-    onEndExercise(session, decisions, Math.floor(elapsed / 60), currentLog);
-  }, [isInstructor, session, currentUser, decisions, onEndExercise]);
+    onEndExercise(session, decisions, Math.floor(elapsed / 60), finalEventLog);
+  }, [isInstructor, session, currentUser, decisions, backendInstructorLog, onEndExercise]);
+
 
   // ------------------------------------------------------------------
   // TEAM MESSAGE (unchanged from original)
@@ -406,11 +500,30 @@ export const TrainingRoom = ({
   };
 
   // ------------------------------------------------------------------
-  // Derived UI data from EventEngine
+  // Derived UI data: merge backend-authoritative events with local EventEngine
   // ------------------------------------------------------------------
   const userRole = currentUser?.role || 'participant';
-  const participantMessages = engineRef.current ? engineRef.current.getParticipantMessages(userRole) : [];
-  const instructorLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
+
+  // Local engine events (optimistic, low-latency local evaluation)
+  const localParticipantMessages = engineRef.current
+    ? engineRef.current.getParticipantMessages(userRole)
+    : [];
+
+  // Merge: backend messages are authoritative; supplement with any local events
+  // not yet confirmed by the backend (e.g. events that just became due this second).
+  // Dedup by title since scenario events have stable, unique titles.
+  const backendTitles = new Set(backendMessages.map(e => e.title));
+  const localOnlyMessages = localParticipantMessages.filter(e => !backendTitles.has(e.title));
+  // Show backend events first (they have authoritative delivery times), then
+  // any local-only events that haven't been confirmed by the backend yet.
+  const participantMessages = [...backendMessages, ...localOnlyMessages]
+    .sort((a, b) => (a.actualDeliveryTimeSec || 0) - (b.actualDeliveryTimeSec || 0));
+
+  // Instructor log: prefer backend (uses DB elapsed_seconds, includes DROPPED/PENDING)
+  // Fall back to local engine log if backend hasn't loaded yet.
+  const localInstructorLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
+  const instructorLog = backendInstructorLog.length > 0 ? backendInstructorLog : localInstructorLog;
+
 
   // ------------------------------------------------------------------
   // Guard: no scenario available

@@ -137,3 +137,13 @@ function parseTimeToSeconds(timeInput) {
   }
   return parseInt(timeInput, 10) || 0;
 }
+
+/**
+ * Converts total seconds to "MM:SS" format string.
+ */
+export function formatSecondsToMMSS(totalSeconds) {
+  const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const mins = Math.floor(s / 60);
+  const secs = s % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
