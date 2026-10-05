@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS participant_decisions (
   rationale TEXT NOT NULL,
   confidence VARCHAR(32) DEFAULT 'Medium', -- High | Medium | Low
   elapsed_minutes INTEGER DEFAULT 0,
+  elapsed_seconds INTEGER DEFAULT 0,        -- raw elapsed seconds at time of submission
   elapsed_time_formatted VARCHAR(16) DEFAULT '00:00',
   submitted_by VARCHAR(64) NOT NULL,
   submitted_role VARCHAR(64) NOT NULL DEFAULT 'commander',

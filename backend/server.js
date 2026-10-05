@@ -757,9 +757,32 @@ app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async 
 // -------------------------------------------------------------
 // 5. COMMAND DECISIONS LOGGING
 // -------------------------------------------------------------
+
+// Helper: map a participant_decisions DB row to the camelCase shape used by the frontend
+function mapDecisionRow(r) {
+  return {
+    id: r.id,
+    exerciseId: r.exercise_id,
+    sessionId: r.exercise_id,
+    title: r.title,
+    rationale: r.rationale,
+    confidence: r.confidence,
+    elapsedMinutes: r.elapsed_minutes,
+    elapsedSeconds: r.elapsed_seconds || 0,
+    elapsedTimeFormatted: r.elapsed_time_formatted,
+    submittedBy: r.submitted_by,
+    submittedRole: r.submitted_role,
+    timestamp: r.timestamp
+  };
+}
+
+// GET decisions — returns decisions for an exercise.
+// Optional ?submittedBy= filter lets a participant retrieve only their own decisions.
+// Instructors omit the filter to see all participant decisions.
 app.get(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => {
   try {
     let exerciseId = req.params.id || req.query.sessionId;
+    const filterBy = req.query.submittedBy || null; // optional per-participant filter
 
     // Resolve session_code to an actual exercise ID if needed
     if (exerciseId) {
@@ -773,29 +796,24 @@ app.get(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => 
     }
 
     let query = 'SELECT * FROM participant_decisions';
-    let params = [];
+    const params = [];
+    const conditions = [];
+
     if (exerciseId) {
-      query += ' WHERE exercise_id = $1';
+      conditions.push(`exercise_id = $${params.length + 1}`);
       params.push(exerciseId);
+    }
+    if (filterBy) {
+      conditions.push(`submitted_by = $${params.length + 1}`);
+      params.push(filterBy);
+    }
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
     }
     query += ' ORDER BY timestamp ASC';
 
     const result = await queryDB(query, params);
-    const decisions = result.rows.map(r => ({
-      id: r.id,
-      exerciseId: r.exercise_id,
-      sessionId: r.exercise_id,
-      title: r.title,
-      rationale: r.rationale,
-      confidence: r.confidence,
-      elapsedMinutes: r.elapsed_minutes,
-      elapsedTimeFormatted: r.elapsed_time_formatted,
-      submittedBy: r.submitted_by,
-      submittedRole: r.submitted_role,
-      timestamp: r.timestamp
-    }));
-
-    res.json(decisions);
+    res.json(result.rows.map(mapDecisionRow));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch decision logs', details: err.message });
   }
@@ -805,28 +823,43 @@ app.get(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => 
 app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => {
   try {
     const d = req.body;
-    const exerciseId = req.params.id || d.sessionId || d.exerciseId;
+    let exerciseId = req.params.id || d.sessionId || d.exerciseId;
     if (!exerciseId || !d.title || !d.rationale) {
       return res.status(400).json({ error: 'Exercise ID, decision title, and rationale are required.' });
     }
 
-    // Guard: reject decision submissions after exercise is completed
-    const exCheck = await queryDB('SELECT status FROM exercises WHERE id = $1', [exerciseId]);
-    if (exCheck.rows.length > 0) {
-      const exStatus = exCheck.rows[0].status;
-      if (exStatus === 'Completed' || exStatus === 'Reviewed') {
-        return res.status(400).json({ error: 'Cannot submit decisions for a completed exercise session.' });
-      }
+    // Resolve session_code to actual exercise ID
+    const exCheck = await queryDB(
+      'SELECT id, status FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [exerciseId]
+    );
+    if (exCheck.rows.length === 0) {
+      return res.status(404).json({ error: `Exercise "${exerciseId}" not found.` });
+    }
+    const exStatus = exCheck.rows[0].status;
+    exerciseId = exCheck.rows[0].id; // use canonical DB id
+
+    // Guard: reject submissions for completed/reviewed exercises
+    if (exStatus === 'Completed' || exStatus === 'Reviewed') {
+      return res.status(400).json({ error: 'Cannot submit decisions for a completed exercise session.' });
     }
 
+    // Stable decision ID — supplied by the client so idempotency works across retries
     const id = d.id || `dec-${Date.now()}`;
     const timestamp = d.timestamp || new Date().toISOString();
+    const submittedBy = d.submittedBy || req.user?.serviceId || 'OPERATOR';
+    const submittedRole = d.submittedRole || req.user?.role || 'commander';
 
-    // ON CONFLICT (id) DO NOTHING provides idempotency: double-clicks or duplicate
-    // requests with the same decision ID will be silently ignored.
+    // Store both elapsed_minutes (legacy display) and elapsed_seconds (precise timing)
+    const rawElapsedSeconds = d.elapsedSeconds !== undefined ? parseInt(d.elapsedSeconds, 10) : 0;
+    const elapsedMinutes = d.elapsedMinutes !== undefined ? parseInt(d.elapsedMinutes, 10) : Math.floor(rawElapsedSeconds / 60);
+    const elapsedFormatted = d.elapsedTimeFormatted || `${String(Math.floor(rawElapsedSeconds / 60)).padStart(2,'0')}:${String(rawElapsedSeconds % 60).padStart(2,'0')}`;
+
+    // ON CONFLICT (id) DO NOTHING: duplicate submission (double-click, retry) is silently accepted
     const result = await queryDB(
-      `INSERT INTO participant_decisions (id, exercise_id, title, rationale, confidence, elapsed_minutes, elapsed_time_formatted, submitted_by, submitted_role, timestamp)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO participant_decisions
+         (id, exercise_id, title, rationale, confidence, elapsed_minutes, elapsed_seconds, elapsed_time_formatted, submitted_by, submitted_role, timestamp)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (id) DO NOTHING
        RETURNING *`,
       [
@@ -835,21 +868,24 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
         d.title.trim(),
         d.rationale.trim(),
         d.confidence || 'Medium',
-        d.elapsedMinutes || 0,
-        d.elapsedTimeFormatted || '00:00',
-        d.submittedBy || req.user.serviceId,
-        d.submittedRole || req.user.role || 'commander',
+        elapsedMinutes,
+        rawElapsedSeconds,
+        elapsedFormatted,
+        submittedBy,
+        submittedRole,
         timestamp
       ]
     );
 
-    // If DO NOTHING fired (duplicate), fetch and return the existing record
     if (result.rows.length === 0) {
+      // DO NOTHING fired — fetch and return the existing record (idempotent response)
       const existing = await queryDB('SELECT * FROM participant_decisions WHERE id = $1', [id]);
-      return res.status(200).json(existing.rows[0] || { id, exerciseId, duplicate: true });
+      const row = existing.rows[0];
+      if (row) return res.status(200).json(mapDecisionRow(row));
+      return res.status(200).json({ id, exerciseId, duplicate: true });
     }
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(mapDecisionRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: 'Failed to log decision', details: err.message });
   }

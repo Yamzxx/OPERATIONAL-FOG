@@ -124,12 +124,17 @@ export async function migrate() {
     await client.query(sql);
     console.log('Schema tables & views verified.');
 
-    // Idempotent column migrations for databases created before schema update
+    // Idempotent column migrations for databases created before schema updates
     await client.query(`
       ALTER TABLE exercises ADD COLUMN IF NOT EXISTS elapsed_seconds INTEGER NOT NULL DEFAULT 0;
-    `).catch(err => console.log('Note: elapsed_seconds column already present or migration not needed:', err.message));
+    `).catch(err => console.log('Note: exercises.elapsed_seconds already present:', err.message));
+
+    await client.query(`
+      ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS elapsed_seconds INTEGER DEFAULT 0;
+    `).catch(err => console.log('Note: participant_decisions.elapsed_seconds already present:', err.message));
 
     console.log('Column migrations applied.');
+
 
     // Seed Users
     for (const u of DEFAULT_USERS) {

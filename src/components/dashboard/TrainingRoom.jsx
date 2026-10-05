@@ -132,14 +132,17 @@ export const TrainingRoom = ({
     const exerciseId = session?.id;
     if (!exerciseId) return;
 
-    // Load persisted decisions so they survive page refresh
+    // Load persisted decisions so they survive page refresh.
+    // ALWAYS override the prop-initialised state with backend data:
+    // if backend returns empty array that means no decisions exist (not a silent failure).
     apiFetch(`/exercises/${exerciseId}/decisions`)
       .then(data => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
+          // Always replace prop-initialised state with authoritative backend data
           setDecisions(data);
         }
       })
-      .catch(() => {}); // Silently fail — UI shows empty state if unavailable
+      .catch(() => {}); // Silently fail — UI shows empty state if backend unreachable
 
     // ------------------------------------------------------------------
     // Seed scenario events into communication_events (idempotent).
@@ -198,7 +201,28 @@ export const TrainingRoom = ({
         }
       } catch (_) {}
     }
+
+    // Refresh decisions from backend on every poll cycle.
+    // This ensures cross-browser decision visibility:
+    //   participant B refreshes → their decisions come from DB, not from stale React state.
+    // Participants fetch their own decisions; instructors fetch all.
+    try {
+      const serviceId = currentUser?.serviceId;
+      const decisionsUrl = isInstructor
+        ? `/exercises/${session.id}/decisions`
+        : `/exercises/${session.id}/decisions${serviceId ? `?submittedBy=${encodeURIComponent(serviceId)}` : ''}`;
+      const freshDecisions = await apiFetch(decisionsUrl, { headers: buildAuthHeaders(currentUser) });
+      if (Array.isArray(freshDecisions)) {
+        setDecisions(prev => {
+          // Merge: keep local decisions not yet confirmed by backend, add any new backend ones
+          const backendIds = new Set(freshDecisions.map(d => d.id));
+          const localOnly = prev.filter(d => !backendIds.has(d.id));
+          return [...freshDecisions, ...localOnly];
+        });
+      }
+    } catch (_) {} // Non-blocking; decisions panel shows last-known state
   }, [session?.id, isExerciseEnded, isInstructor, currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // Mount: immediate first poll (don't wait 8 s for first load)
   useEffect(() => {
@@ -389,14 +413,18 @@ export const TrainingRoom = ({
     setIsSubmittingDecision(true);
     setBackendError('');
 
+    // Capture the simulation elapsed time at the moment of submission
+    const rawElapsedSeconds = engineRef.current?.elapsedSeconds || 0;
+
     const newDecision = {
       id: `dec-${Date.now()}`,
       title: decisionTitle.trim(),
       rationale: rationale.trim(),
       confidence,
       timestamp: new Date().toISOString(),
-      elapsedMinutes: Math.floor((engineRef.current?.elapsedSeconds || 0) / 60),
-      elapsedTimeFormatted: formatSecondsToMMSS(engineRef.current?.elapsedSeconds || 0),
+      elapsedSeconds: rawElapsedSeconds,
+      elapsedMinutes: Math.floor(rawElapsedSeconds / 60),
+      elapsedTimeFormatted: formatSecondsToMMSS(rawElapsedSeconds),
       submittedBy: currentUser?.serviceId || 'Operator',
       submittedRole: currentUser?.role || 'commander'
     };
@@ -411,30 +439,38 @@ export const TrainingRoom = ({
           headers: buildAuthHeaders(currentUser),
           body: JSON.stringify({ ...newDecision, exerciseId })
         });
-        // Use the backend-returned record (has server-side timestamp)
-        setDecisions(prev => [...prev, persisted]);
+        // Use the backend-returned record (camelCase, server timestamp)
+        // Deduplicate: replace if this ID already exists (idempotent re-submission)
+        setDecisions(prev => {
+          const exists = prev.some(d => d.id === persisted.id);
+          return exists ? prev.map(d => d.id === persisted.id ? persisted : d) : [...prev, persisted];
+        });
       } else {
-        // No backend ID — fall through to local-only path (single-user sessions)
+        // No backend ID — fall through to local-only path (single-user sessions without backend)
         onSaveDecision(session.id, newDecision);
         setDecisions(prev => [...prev, newDecision]);
       }
 
-      // Also broadcast via multiplayer mesh for real-time visibility
+      // Also broadcast via multiplayer mesh (non-authoritative; for real-time UI update only)
       if (session?.sessionCode) {
         multiplayerEngine.submitDecision(session.sessionCode, newDecision);
       }
 
       showToast(`Decision "${newDecision.title}" logged at T+${newDecision.elapsedTimeFormatted}.`, 'success');
+      // Clear form ONLY after confirmed backend success
       setDecisionTitle('');
       setRationale('');
     } catch (err) {
-      // CRITICAL: do NOT show success. Surface the actual error to the user.
-      setBackendError(err.message);
-      showToast(`Failed to save decision: ${err.message}`, 'error');
+      // DO NOT clear form on failure — preserve the user's text so they can retry
+      const errorMsg = err.message || 'Backend error. Please retry.';
+      setBackendError(errorMsg);
+      showToast(`Decision submission failed: ${errorMsg}`, 'error');
     } finally {
       setIsSubmittingDecision(false);
     }
   };
+
+
 
   // ------------------------------------------------------------------
   // END EXERCISE — backend authoritative
