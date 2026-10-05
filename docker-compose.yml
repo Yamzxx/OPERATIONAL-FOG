@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-op_fog_db}
       POSTGRES_USER: ${POSTGRES_USER:-op_fog_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-op_fog_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-op_fog_password_change_me}
     ports:
       # Bound to localhost for security — not exposed publicly
       - "127.0.0.1:5432:5432"
@@ -34,9 +34,12 @@ services:
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-op_fog_db}
       DB_USER: ${POSTGRES_USER:-op_fog_user}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-op_fog_password}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-op_fog_password_change_me}
     ports:
       - "4000:4000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
     networks:
       - op-fog-network
     depends_on:
