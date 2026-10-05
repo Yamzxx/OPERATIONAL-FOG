@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, LogIn, Users, CheckCircle, ShieldAlert } from 'lucide-react';
+import { X, LogIn, Users, RefreshCw, AlertTriangle } from 'lucide-react';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 
 export const JoinSessionModal = ({ 
@@ -12,7 +12,6 @@ export const JoinSessionModal = ({
   const [displayName, setDisplayName] = useState(currentUser?.serviceId || 'Participant Node Alpha');
   const [role, setRole] = useState('commander');
   const [errorMsg, setErrorMsg] = useState('');
-
   const [isLoading, setIsLoading] = useState(false);
 
   if (!isOpen) return null;
@@ -20,25 +19,35 @@ export const JoinSessionModal = ({
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMsg('');
-    setIsLoading(true);
 
-    if (!sessionCode.trim()) {
-      setErrorMsg('Please enter a valid Join Code.');
-      setIsLoading(false);
+    const cleanCode = sessionCode.trim().toUpperCase();
+
+    if (!cleanCode) {
+      setErrorMsg('Please enter a valid Join Code (e.g. FOG-7429).');
       return;
     }
 
+    // Basic format validation — codes start with FOG- or are alphanumeric
+    if (cleanCode.length < 4) {
+      setErrorMsg('Join Code is too short. Please check and try again.');
+      return;
+    }
+
+    setIsLoading(true);
+
     try {
-      const session = await multiplayerEngine.joinSession(sessionCode.trim(), {
+      const session = await multiplayerEngine.joinSession(cleanCode, {
+        // Use the serviceId from the signed-in user (works in both instructor/participant roles).
+        // A random fallback is generated if the user somehow has no serviceId.
         serviceId: currentUser?.serviceId || `USER-${Math.floor(1000 + Math.random() * 9000)}`,
-        displayName: displayName.trim(),
+        displayName: displayName.trim() || currentUser?.serviceId || 'Participant',
         role
       });
 
       onJoinedSession(session);
       onClose();
     } catch (err) {
-      setErrorMsg(err.message || 'Failed to join session. Please verify the Join Code.');
+      setErrorMsg(err.message || 'Failed to join session. Please verify the Join Code and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -54,50 +63,65 @@ export const JoinSessionModal = ({
               Join Multiplayer Exercise Session
             </span>
           </div>
-          <button className="gov-modal-close" onClick={onClose} style={{ color: '#FFF' }}>
+          <button className="gov-modal-close" onClick={onClose} style={{ color: '#FFF' }} disabled={isLoading}>
             <X size={18} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="gov-modal-body">
           {errorMsg && (
-            <div style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B', padding: '8px 12px', fontSize: '12px', marginBottom: '14px', borderRadius: '2px' }}>
-              {errorMsg}
+            <div style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B', padding: '10px 12px', fontSize: '12px', marginBottom: '14px', borderRadius: '2px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: '1px' }} />
+              <span>{errorMsg}</span>
             </div>
           )}
 
           <div className="gov-form-group">
             <label className="gov-form-label">Session Join Code</label>
             <input 
+              id="join-session-code-input"
               type="text" 
               className="gov-form-input" 
               style={{ textTransform: 'uppercase', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold', fontSize: '16px' }}
               placeholder="e.g. FOG-7429" 
               value={sessionCode} 
               onChange={(e) => setSessionCode(e.target.value)}
+              disabled={isLoading}
+              autoFocus
               required 
             />
+            <div style={{ fontSize: '11px', color: '#64748B', marginTop: '4px' }}>
+              Enter the code provided by your Exercise Instructor.
+            </div>
           </div>
 
           <div className="gov-form-group">
             <label className="gov-form-label">Participant Display Name</label>
             <input 
+              id="join-session-display-name-input"
               type="text" 
               className="gov-form-input" 
               placeholder="e.g. Commander Alpha" 
               value={displayName} 
               onChange={(e) => setDisplayName(e.target.value)}
+              disabled={isLoading}
               required 
             />
           </div>
 
           <div className="gov-form-group">
             <label className="gov-form-label">Assigned Tactical Role</label>
-            <select className="gov-form-select" value={role} onChange={(e) => setRole(e.target.value)}>
+            <select
+              id="join-session-role-select"
+              className="gov-form-select"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              disabled={isLoading}
+            >
               <option value="commander">Commander (Strategic Command)</option>
               <option value="field_unit">Field Unit / Forward Observer</option>
               <option value="logistics">Logistics Hub Coordinator</option>
-              <option value="signals">Signals & Relay Officer</option>
+              <option value="signals">Signals &amp; Relay Officer</option>
             </select>
           </div>
 
@@ -106,8 +130,17 @@ export const JoinSessionModal = ({
               Cancel
             </button>
             <button type="submit" className="gov-btn gov-btn-primary" disabled={isLoading}>
-              <LogIn size={15} />
-              <span>{isLoading ? 'Connecting to Session...' : 'Connect to Session'}</span>
+              {isLoading ? (
+                <>
+                  <RefreshCw size={15} className="animate-spin" />
+                  <span>Connecting to Session...</span>
+                </>
+              ) : (
+                <>
+                  <LogIn size={15} />
+                  <span>Connect to Session</span>
+                </>
+              )}
             </button>
           </div>
         </form>

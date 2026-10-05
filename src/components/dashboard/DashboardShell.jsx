@@ -14,6 +14,25 @@ import { DemoGuide } from './DemoGuide';
 import { storageService } from '../../services/storageService';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 
+// Session storage key used to survive page refresh for both instructor and participant.
+const ACTIVE_SESSION_KEY = 'op_fog_active_session_code';
+
+// Helper: fetch a single exercise by join code directly from the backend.
+async function fetchExerciseByCode(code) {
+  try {
+    const apiBase = (
+      typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+        ? import.meta.env.VITE_BACKEND_URL
+        : 'http://localhost:4000'
+    ) + '/api';
+    const res = await fetch(`${apiBase}/exercises/lookup/${encodeURIComponent(code.toUpperCase())}`);
+    if (res.ok) return await res.json();
+  } catch (e) {
+    // Backend unreachable — silently fail, no recovery possible
+  }
+  return null;
+}
+
 export const DashboardShell = ({ 
   currentUser, 
   onSignOut,
@@ -69,6 +88,29 @@ export const DashboardShell = ({
     };
   }, []);
 
+  // Attempt to restore an active training session after a page refresh.
+  // Both instructor and participant persist their active session code to sessionStorage.
+  useEffect(() => {
+    const persistedCode = sessionStorage.getItem(ACTIVE_SESSION_KEY);
+    if (!persistedCode || activeTrainingSession) return;
+
+    fetchExerciseByCode(persistedCode).then((restoredSession) => {
+      if (!restoredSession) return;
+      // Only restore sessions that are still active/joinable
+      const activeStatuses = ['Waiting', 'Ready', 'In Progress', 'Active'];
+      if (!activeStatuses.includes(restoredSession.status)) {
+        sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+        return;
+      }
+      // Restore the scenario from the snapshot embedded in the exercise
+      const restoredScenario = restoredSession.scenarioSnapshot || restoredSession.scenario || null;
+      setActiveTrainingSession(restoredSession);
+      setActiveScenario(restoredScenario);
+      setActiveView('training-room');
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // runs once on mount
+
   const handleStartScenario = (scenario) => {
     // Create new single-user session
     const newSess = storageService.createSession({
@@ -85,6 +127,10 @@ export const DashboardShell = ({
   };
 
   const handleMultiplayerSessionCreated = (mpSession) => {
+    // Persist so the instructor can restore their session after a page refresh
+    if (mpSession?.sessionCode) {
+      sessionStorage.setItem(ACTIVE_SESSION_KEY, mpSession.sessionCode);
+    }
     setSessions(multiplayerEngine.getSessions());
     setActiveTrainingSession(mpSession);
     setActiveScenario(mpSession.scenarioSnapshot || mpSession.scenario || scenarios[0]);
@@ -92,6 +138,11 @@ export const DashboardShell = ({
   };
 
   const handleJoinedSession = (joinedSession) => {
+    // Persist the join code so a page refresh can restore this participant's session
+    // by re-fetching from the backend (not from localStorage).
+    if (joinedSession?.sessionCode) {
+      sessionStorage.setItem(ACTIVE_SESSION_KEY, joinedSession.sessionCode);
+    }
     setSessions(multiplayerEngine.getSessions());
     setActiveTrainingSession(joinedSession);
     const scen = joinedSession.scenarioSnapshot || joinedSession.scenario || scenarios.find(s => s.id === joinedSession.scenarioId) || scenarios[0];
@@ -110,6 +161,9 @@ export const DashboardShell = ({
   };
 
   const handleEndExercise = (session, decisions, durationMinutes, events = []) => {
+    // Clear the persisted active session on exercise completion
+    sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+
     // Update session status
     if (session.sessionCode) {
       multiplayerEngine.endExercise(session.sessionCode);

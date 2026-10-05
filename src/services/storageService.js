@@ -263,9 +263,15 @@ function setItem(key, value) {
   }
 }
 
-const API_BASE_URL = typeof process !== 'undefined' && process.env?.VITE_BACKEND_URL 
-  ? process.env.VITE_BACKEND_URL + '/api'
-  : 'http://localhost:4000/api';
+// Vite exposes env vars via import.meta.env in the browser, not process.env.
+const API_BASE_URL = (
+  typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+    ? import.meta.env.VITE_BACKEND_URL
+    : (typeof process !== 'undefined' && process.env?.VITE_BACKEND_URL)
+      ? process.env.VITE_BACKEND_URL
+      : 'http://localhost:4000'
+) + '/api';
+
 
 export const storageService = {
   // Scenarios

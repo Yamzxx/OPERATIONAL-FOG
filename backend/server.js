@@ -15,7 +15,11 @@ const { Pool } = pg;
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-app.use(cors());
+// Allow all origins in development. In production, restrict to the actual frontend domain.
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 app.use(express.json());
 app.use(authenticateUser);
 
@@ -252,6 +256,28 @@ app.get(['/api/exercises', '/api/sessions'], async (req, res) => {
   }
 });
 
+// GET: Look up a session by join code without mutating anything.
+// This MUST be registered BEFORE the /api/exercises/:id catch-all route.
+// Used by participants to restore their session context after a page refresh.
+app.get(['/api/exercises/join/:code', '/api/sessions/join/:code', '/api/exercises/lookup/:code', '/api/sessions/lookup/:code'], async (req, res) => {
+  try {
+    const code = (req.params.code || '').trim();
+    if (!code) {
+      return res.status(400).json({ error: 'Please provide a Join Code.' });
+    }
+    const result = await queryDB(
+      'SELECT * FROM exercises WHERE UPPER(session_code) = UPPER($1)',
+      [code]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: `Join code "${code}" not found.` });
+    }
+    res.json(mapExerciseRow(result.rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to look up session', details: err.message });
+  }
+});
+
 app.get(['/api/exercises/code/:code', '/api/sessions/code/:code', '/api/exercises/:id'], async (req, res) => {
   try {
     const codeOrId = (req.params.code || req.params.id || '').trim();
@@ -378,8 +404,14 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
     }
 
     const ex = result.rows[0];
-    if (ex.status === 'Completed') {
-      return res.status(400).json({ error: 'This exercise session has already completed.' });
+
+    // Only allow joining sessions that are in a joinable state.
+    const joinableStatuses = ['Waiting', 'Ready', 'In Progress', 'Active'];
+    if (!joinableStatuses.includes(ex.status)) {
+      const reason = ex.status === 'Completed' || ex.status === 'Reviewed'
+        ? 'This exercise session has already completed and is no longer accepting participants.'
+        : `This exercise session (status: ${ex.status}) is not currently accepting participants.`;
+      return res.status(400).json({ error: reason });
     }
 
     let participants = typeof ex.participants_json === 'string' ? JSON.parse(ex.participants_json) : (ex.participants_json || []);
@@ -388,6 +420,7 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
     const existingIndex = participants.findIndex(p => p.serviceId === userServiceId);
 
     if (existingIndex >= 0) {
+      // Participant is rejoining — update their status to Online
       participants[existingIndex].status = 'Online';
       participants[existingIndex].displayName = displayName || participants[existingIndex].displayName || userServiceId;
       participants[existingIndex].role = role || participants[existingIndex].role;
@@ -405,6 +438,7 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
       });
     }
 
+    // Auto-advance status: Waiting -> Ready when a second participant joins
     let newStatus = ex.status;
     if (participants.length >= 2 && ex.status === 'Waiting') {
       newStatus = 'Ready';
@@ -415,11 +449,11 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
       [JSON.stringify(participants), participants.length, newStatus, ex.id]
     );
 
-    // Register in exercise_participants table
+    // Upsert into exercise_participants for relational membership tracking
     await queryDB(
       `INSERT INTO exercise_participants (id, exercise_id, user_id, display_name, role, status)
        VALUES ($1, $2, $3, $4, $5, 'Online')
-       ON CONFLICT (id) DO NOTHING`,
+       ON CONFLICT (id) DO UPDATE SET status = 'Online', display_name = EXCLUDED.display_name`,
       [`ep-${ex.id}-${userServiceId}`, ex.id, userServiceId, displayName || userServiceId, role || 'commander']
     ).catch(() => {});
 

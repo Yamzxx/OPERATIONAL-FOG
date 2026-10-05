@@ -20,9 +20,15 @@ export function generateSessionCode() {
   return code;
 }
 
-const API_BASE_URL = typeof process !== 'undefined' && process.env?.VITE_BACKEND_URL 
-  ? process.env.VITE_BACKEND_URL + '/api'
-  : 'http://localhost:4000/api';
+// Vite exposes env vars via import.meta.env in the browser, not process.env.
+// Using a safe guard so this also works in Node.js test environments.
+const API_BASE_URL = (
+  typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+    ? import.meta.env.VITE_BACKEND_URL
+    : (typeof process !== 'undefined' && process.env?.VITE_BACKEND_URL)
+      ? process.env.VITE_BACKEND_URL
+      : 'http://localhost:4000'
+) + '/api';
 
 class MultiplayerEngine {
   constructor() {
@@ -122,9 +128,12 @@ class MultiplayerEngine {
   }
 
   // Create new multiplayer session (Backend Authoritative with Local Backup)
-  async createSession({ scenario, sessionName, maxParticipants = 6, creatorServiceId, creatorRole = 'instructor' }) {
+  // sessionCode may be provided by the caller so the code shown in the UI is the same
+  // code written to PostgreSQL — preventing the two-code mismatch that caused join failures.
+  async createSession({ scenario, sessionName, maxParticipants = 6, creatorServiceId, creatorRole = 'instructor', sessionCode: callerCode }) {
     const sessions = this.getSessions();
-    const sessionCode = generateSessionCode();
+    // Use caller-provided code if given; otherwise generate one here.
+    const sessionCode = (callerCode || generateSessionCode()).toUpperCase().trim();
 
     const newSession = {
       id: `mp-sess-${Date.now()}`,
@@ -222,11 +231,20 @@ class MultiplayerEngine {
         this.broadcast('PARTICIPANT_JOINED', { sessionCode: cleanCode, participant: { serviceId, displayName, role } });
         return data;
       } catch (err) {
-        // If server responded with an explicit status error (e.g. 404, 400), rethrow immediately
-        if (err.message && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
+        // Re-throw any error that came from the backend (4xx/5xx responses).
+        // Only fall through to local storage if the network itself was unreachable
+        // (i.e., the backend server is completely down).
+        const isNetworkError = (
+          err.message?.includes('Failed to fetch') ||
+          err.message?.includes('NetworkError') ||
+          err.message?.includes('fetch') ||
+          err.name === 'TypeError'
+        );
+        if (!isNetworkError) {
+          // This is a real server error (404 invalid code, 400 completed, etc.) — surface it.
           throw err;
         }
-        console.warn('Backend API server offline during join, attempting local fallback:', err.message);
+        console.warn('Backend API server unreachable during join, attempting local cache fallback:', err.message);
       }
     }
 
