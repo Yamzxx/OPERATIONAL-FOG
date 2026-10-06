@@ -14,7 +14,11 @@ import {
   Info,
   Search,
   Users,
-  Play
+  Play,
+  BarChart2,
+  TrendingUp,
+  ShieldCheck,
+  Zap
 } from 'lucide-react';
 import { formatSecondsToMMSS } from '../../services/eventEngine';
 import { TimelineReplay } from './TimelineReplay';
@@ -32,7 +36,7 @@ export const AfterActionReview = ({
   const [scenarioFilter, setScenarioFilter] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedParticipantRole, setSelectedParticipantRole] = useState('ALL');
-  const [activeReportTab, setActiveReportTab] = useState('summary'); // summary | replay | participant_history | comms_analysis
+  const [activeReportTab, setActiveReportTab] = useState('summary'); // summary | replay | participant_history | comms_analysis | score
 
   const selectedAAR = aars.find(a => a.id === selectedAARId) || aars[0];
 
@@ -73,6 +77,78 @@ export const AfterActionReview = ({
     conflicting: events.filter(e => e.deliveryBehavior === 'conflicting').length,
     pending: events.filter(e => e.status === 'PENDING').length
   };
+
+  // -----------------------------------------------------------------------
+  // PERFORMANCE SCORE COMPUTATION (Feature 9)
+  // Weighted scoring across 4 pillars:
+  //   1. Decision Compliance  (35 pts) — were decisions recorded under friction?
+  //   2. Rationale Quality    (25 pts) — depth of written justification
+  //   3. Comm Handling        (25 pts) — navigating degraded-comms events
+  //   4. Intel Verification   (15 pts) — acknowledging conflicting / incomplete intel
+  // -----------------------------------------------------------------------
+  const computePerformanceScore = () => {
+    const totalEvents = commStats.total || 0;
+    const frictionEvents = (commStats.delayed || 0) + (commStats.dropped || 0) + (commStats.incomplete || 0) + (commStats.conflicting || 0);
+    const decisionsLogged = decisions.length;
+
+    // 1. Decision Compliance (35 pts)
+    // Full marks if at least 1 decision per 2 friction events (min 1 decision required).
+    let decisionScore = 0;
+    if (decisionsLogged > 0) {
+      const targetDecisions = Math.max(1, Math.ceil(frictionEvents / 2));
+      decisionScore = Math.min(35, Math.round((decisionsLogged / targetDecisions) * 35));
+    }
+
+    // 2. Rationale Quality (25 pts)
+    // Average word count of rationales — 20+ words = full marks.
+    let rationaleScore = 0;
+    if (decisionsLogged > 0) {
+      const avgWords = decisions.reduce((sum, d) => sum + ((d.rationale || '').trim().split(/\s+/).filter(Boolean).length), 0) / decisionsLogged;
+      rationaleScore = Math.min(25, Math.round((avgWords / 20) * 25));
+    }
+
+    // 3. Communication Handling (25 pts)
+    // Score drops for every dropped or delayed event that had no corresponding decision.
+    let commScore = 25;
+    if (frictionEvents > 0 && decisionsLogged === 0) {
+      commScore = 0;
+    } else if (frictionEvents > 0) {
+      // Deduct 5 pts per unaddressed friction event beyond the first two
+      const unaddressed = Math.max(0, frictionEvents - decisionsLogged * 2);
+      commScore = Math.max(0, 25 - unaddressed * 5);
+    }
+
+    // 4. Intel Verification (15 pts)
+    // Full marks if commander explicitly noted conflicting/incomplete intel in rationale.
+    let verificationScore = 0;
+    const conflictingKeywords = ['conflict', 'contradict', 'discrepan', 'verify', 'verif', 'cross-check', 'corrobor', 'incomplete', 'corrupt', 'unverif'];
+    const rationaleCombined = decisions.map(d => (d.rationale || '').toLowerCase()).join(' ');
+    const conflictingEventsExist = (commStats.conflicting || 0) + (commStats.incomplete || 0) > 0;
+    if (!conflictingEventsExist) {
+      verificationScore = 15; // No conflicting intel to verify — full marks
+    } else {
+      const mentionsVerification = conflictingKeywords.some(kw => rationaleCombined.includes(kw));
+      verificationScore = mentionsVerification ? 15 : 5;
+    }
+
+    const total = decisionScore + rationaleScore + commScore + verificationScore;
+    const grade = total >= 90 ? 'A' : total >= 75 ? 'B' : total >= 60 ? 'C' : total >= 45 ? 'D' : 'F';
+    const gradeColor = total >= 90 ? '#15803D' : total >= 75 ? '#0369A1' : total >= 60 ? '#D97706' : total >= 45 ? '#EA580C' : '#DC2626';
+
+    return {
+      total,
+      grade,
+      gradeColor,
+      breakdown: [
+        { label: 'Decision Compliance', score: decisionScore, max: 35, desc: `${decisionsLogged} decision${decisionsLogged !== 1 ? 's' : ''} logged under ${frictionEvents} friction event${frictionEvents !== 1 ? 's' : ''}` },
+        { label: 'Rationale Quality', score: rationaleScore, max: 25, desc: decisionsLogged > 0 ? `Avg ${Math.round(decisions.reduce((s, d) => s + ((d.rationale || '').trim().split(/\s+/).filter(Boolean).length), 0) / decisionsLogged)} words per rationale` : 'No decisions recorded' },
+        { label: 'Comm Handling', score: commScore, max: 25, desc: `${frictionEvents} degraded-comms events navigated` },
+        { label: 'Intel Verification', score: verificationScore, max: 15, desc: conflictingEventsExist ? (verificationScore === 15 ? 'Verification acknowledged in rationale' : 'Conflicting intel not referenced in rationale') : 'No conflicting intel present' }
+      ]
+    };
+  };
+
+  const perfScore = selectedAAR ? computePerformanceScore() : null;
 
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -223,7 +299,8 @@ export const AfterActionReview = ({
                 { id: 'summary', label: 'Exercise Summary' },
                 { id: 'replay', label: 'Timeline Replay Player' },
                 { id: 'participant_history', label: 'Participant History & Info State' },
-                { id: 'comms_analysis', label: 'Communication Analysis' }
+                { id: 'comms_analysis', label: 'Communication Analysis' },
+                { id: 'score', label: '🏅 Performance Score' }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -479,6 +556,78 @@ export const AfterActionReview = ({
                   </tbody>
                 </table>
                 )}
+              </div>
+            )}
+
+            {/* TAB 5: PERFORMANCE SCORE */}
+            {activeReportTab === 'score' && perfScore && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* Score Hero Card */}
+                <div style={{ backgroundColor: '#0F172A', border: '1px solid #334155', padding: '28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '24px', flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '6px' }}>COMPOSITE PERFORMANCE SCORE</div>
+                    <div style={{ fontFamily: 'monospace', fontSize: '64px', fontWeight: '900', color: perfScore.gradeColor, lineHeight: 1 }}>
+                      {perfScore.total}
+                      <span style={{ fontSize: '24px', color: '#64748B' }}>/100</span>
+                    </div>
+                    <div style={{ marginTop: '8px', fontSize: '13px', color: '#CBD5E1' }}>
+                      Exercise: <strong style={{ color: '#F1F5F9' }}>{selectedAAR.sessionName}</strong>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'center', border: `3px solid ${perfScore.gradeColor}`, padding: '16px 28px', borderRadius: '4px' }}>
+                    <div style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 'bold', marginBottom: '4px' }}>GRADE</div>
+                    <div style={{ fontFamily: 'var(--font-family-serif)', fontSize: '72px', fontWeight: '900', color: perfScore.gradeColor, lineHeight: 1 }}>
+                      {perfScore.grade}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '4px' }}>
+                      {perfScore.total >= 90 ? 'Outstanding' : perfScore.total >= 75 ? 'Proficient' : perfScore.total >= 60 ? 'Adequate' : perfScore.total >= 45 ? 'Marginal' : 'Unsatisfactory'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Score Breakdown Bars */}
+                <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid var(--color-primary-navy)', padding: '20px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <BarChart2 size={16} />
+                    Score Pillar Breakdown
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {perfScore.breakdown.map((pillar, i) => {
+                      const pct = Math.round((pillar.score / pillar.max) * 100);
+                      const barColor = pct >= 80 ? '#15803D' : pct >= 60 ? '#D97706' : '#DC2626';
+                      return (
+                        <div key={i}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                            <div>
+                              <span style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>{pillar.label}</span>
+                              <span style={{ fontSize: '11px', color: '#64748B', marginLeft: '8px' }}>{pillar.desc}</span>
+                            </div>
+                            <span style={{ fontFamily: 'monospace', fontWeight: 'bold', fontSize: '14px', color: barColor }}>
+                              {pillar.score} / {pillar.max}
+                            </span>
+                          </div>
+                          <div style={{ height: '10px', backgroundColor: '#E2E8F0', borderRadius: '2px', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${pct}%`, backgroundColor: barColor, transition: 'width 0.4s ease' }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Scoring Methodology */}
+                <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', padding: '16px', fontSize: '12px', color: '#475569' }}>
+                  <div style={{ fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <TrendingUp size={14} />
+                    Scoring Methodology
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <div><strong>Decision Compliance (35 pts):</strong> At least 1 decision per 2 friction events required for full marks.</div>
+                    <div><strong>Rationale Quality (25 pts):</strong> Average word count across all submitted rationales. 20+ words earns full marks.</div>
+                    <div><strong>Comm Handling (25 pts):</strong> Deductions for unaddressed delayed, dropped, or incomplete communication events.</div>
+                    <div><strong>Intel Verification (15 pts):</strong> Full marks if conflicting or incomplete intel is explicitly acknowledged in decision rationale.</div>
+                  </div>
+                </div>
               </div>
             )}
           </div>

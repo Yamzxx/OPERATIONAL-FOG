@@ -350,7 +350,41 @@ export const TrainingRoom = ({
   const handlePauseToggle = useCallback(async () => {
     if (!engineRef.current || isTransitioning) return;
 
+    const isRunning = engineRef.current.isRunning;
     const isPaused = engineState.isPaused;
+
+    // If engine has never been started (e.g. Waiting status), start it now
+    if (!isRunning) {
+      engineRef.current.start();
+      // Broadcast to other multiplayer nodes
+      if (session?.sessionCode) {
+        multiplayerEngine.startExercise(session.sessionCode);
+      }
+      // Persist 'In Progress' to backend
+      if (isInstructor && session?.id) {
+        setIsTransitioning(true);
+        setBackendError('');
+        try {
+          const updated = await apiFetch(`/exercises/${session.id}/transition`, {
+            method: 'POST',
+            headers: buildAuthHeaders(currentUser),
+            body: JSON.stringify({
+              targetStatus: 'In Progress',
+              elapsedSeconds: 0
+            })
+          });
+          setExerciseStatus(updated.status);
+          setLiveSession(prev => ({ ...prev, ...updated }));
+        } catch (err) {
+          setBackendError(err.message);
+          showToast(err.message, 'error');
+        } finally {
+          setIsTransitioning(false);
+        }
+      }
+      return;
+    }
+
     const targetStatus = isPaused ? 'In Progress' : 'Paused';
 
     // Update the local engine immediately for responsive UI
@@ -643,10 +677,11 @@ export const TrainingRoom = ({
             <button 
               onClick={handlePauseToggle} 
               disabled={isTransitioning || isExerciseEnded}
-              style={{ background: 'none', border: 'none', color: engineState.isPaused ? '#F59E0B' : '#4ADE80', cursor: isTransitioning || isExerciseEnded ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', opacity: isTransitioning ? 0.5 : 1 }}
-              title={isTransitioning ? 'Updating...' : engineState.isPaused ? 'Resume Engine' : 'Pause Engine'}
+              style={{ background: 'none', border: 'none', color: !engineState.isRunning ? '#4ADE80' : engineState.isPaused ? '#F59E0B' : '#F59E0B', cursor: isTransitioning || isExerciseEnded ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '4px', opacity: isTransitioning ? 0.5 : 1 }}
+              title={isTransitioning ? 'Updating...' : !engineState.isRunning ? 'Start Exercise' : engineState.isPaused ? 'Resume Engine' : 'Pause Engine'}
             >
-              {isTransitioning ? <RefreshCw size={16} className="animate-spin" /> : engineState.isPaused ? <Play size={16} /> : <Pause size={16} />}
+              {isTransitioning ? <RefreshCw size={16} className="animate-spin" /> : (!engineState.isRunning || engineState.isPaused) ? <Play size={16} /> : <Pause size={16} />}
+              {!engineState.isRunning && <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#4ADE80' }}>START</span>}
             </button>
 
             <button 

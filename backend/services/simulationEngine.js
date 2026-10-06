@@ -41,6 +41,7 @@ export const RECIPIENT_ROLES = {
  */
 export function validateStateTransition(currentStatus, targetStatus) {
   const validTransitions = {
+    'Waiting': ['Ready', 'In Progress', 'Active', 'Completed'],
     'Draft': ['Ready', 'In Progress', 'Completed'],
     'Ready': ['In Progress', 'Active', 'Completed'],
     'In Progress': ['Paused', 'Completed'],
