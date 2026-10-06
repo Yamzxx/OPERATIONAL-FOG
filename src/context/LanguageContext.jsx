@@ -23,7 +23,7 @@ export const HINDI_DICTIONARY = {
 
   // Hero Banner
   'hero_tag': 'रक्षा प्रशिक्षण सिमुलेटर',
-  'hero_subtitle': 'संचार विफल होने पर निर्णयों के लिए प्रशिक्षण लें',
+  'hero_subtitle': 'जब संचार विफल हो जाए तब निर्णय लेने का प्रशिक्षण',
   'hero_desc': 'सूचना में देरी होने, अपूर्ण होने या परस्पर विरोधी होने पर समन्वय और निर्णय लेने का अभ्यास करें। उच्च-घर्षण सामरिक वातावरण में नेविगेट करने वाले बहु-एजेंसी कमांड नोड्स, सिग्नल अधिकारियों और संकट प्रतिक्रिया नेताओं के लिए डिज़ाइन किया गया।',
   'explore_training': 'प्रशिक्षण का अन्वेषण करें',
   'sign_in': 'साइन इन करें',
@@ -41,7 +41,7 @@ export const HINDI_DICTIONARY = {
   'about_title': 'मंच के बारे में',
   'about_heading': 'युद्ध और संकट के घर्षण के खिलाफ लचीलापन निर्माण',
   'about_p1': 'उच्च-तीव्रता वाले अभियानों और संकट प्रबंधन अभ्यासों के दौरान, आधुनिक कमांड संरचनाएं स्पष्ट, निरंतर रेडियो, उपग्रह और डेटा प्रसारण पर बहुत अधिक निर्भर करती हैं। हालांकि, वास्तविक दुनिया के परिचालन वातावरण शायद ही कभी प्राचीन होते हैं। विद्युत चुम्बकीय हस्तक्षेप, भौतिक सीमा बाधाएं, रिले विफलताएं और प्रतिकूल ठेला गंभीर संचार गिरावट पेश करते हैं।',
-  'about_p2': 'OPERATIONAL FOG एक विशेष सिमुलेशन ढांचा है जिसे कमांडरों, सिग्नल अधिकारियों और रणनीतिक योजनाकारों को गंभीर संचार घर्षण के तहत निर्णय लेने के लिए तैयार करने के लिए विकसित किया गया है। संरचित प्रशिक्षण परिदृश्यों में कृत्रिम संदेश विलंबता, पैकेट हानि, विकृत खुफिया फीड और विरोधाभासी क्षेत्र रिपोर्टों को इंजेक्ट करके, मंच मानव अनुकूलन क्षमता और संगठनात्मक लचीलेपन को मापता है।',
+  'about_p2': 'एक विशेष सिमुलेशन ढांचा है जिसे कमांडरों, सिग्नल अधिकारियों और रणनीतिक योजनाकारों को गंभीर संचार घर्षण के तहत निर्णय लेने के लिए तैयार करने के लिए विकसित किया गया है। संरचित प्रशिक्षण परिदृश्यों में कृत्रिम संदेश विलंबता, पैकेट हानि, विकृत खुफिया फीड और विरोधाभासी क्षेत्र रिपोर्टों को इंजेक्ट करके, मंच मानव अनुकूलन क्षमता और संगठनात्मक लचीलेपन को मापता है।',
   'about_p3': 'प्रतिभागी आवश्यक स्थितिजन्य रिपोर्टों को प्राथमिकता देना, अपुष्ट खुफिया जानकारी को सत्यापित करना, अनावश्यक संचार प्रोटोकॉल स्थापित करना और सामरिक गति बनाए रखना सीखते हैं, भले ही उच्च-स्तरीय कमांड चैनल अस्थायी रूप से कट गए हों।',
   'read_whitepaper': 'मंच तकनीकी श्वेतपत्र पढ़ें',
   'platform_overview': 'मंच का अवलोकन',
@@ -93,18 +93,54 @@ export const HINDI_DICTIONARY = {
   // Updates & Resources
   'updates_resources_title': 'अपडेट और संसाधन',
   'updates_resources_sub': 'नवीनतम मंच विज्ञप्ति और तकनीकी दस्तावेज',
+  'training_curricula_sops': 'प्रशिक्षण पाठ्यक्रम और एसओपी',
+  'announcements_updates': 'घोषणाएं और मंच अपडेट',
+  'exercise_gallery': 'अभ्यास गैलरी',
+  'prototype_notice': 'प्रोटोटाइप नोटिस',
 
-  // Useful Links & Footer
-  'useful_links_title': 'उपयोगी लिंक और त्वरित पहुंच',
-  'footer_prototype': 'भारत सरकार प्रशिक्षण प्रोटोटाइप',
-  'footer_desc': 'रक्षा अभियानों में संचार घर्षण और स्थितिजन्य अनिश्चितता का मुकाबला करने के लिए विकसित राष्ट्रीय सुरक्षा सिमुलेशन ढांचा।'
+  // Useful Links
+  'useful_links_title': 'उपयोगी लिंक',
+  'quick_access_portal': 'त्वरित पहुंच पोर्टल',
+  'instructor_workspace': 'प्रशिक्षक कार्यस्थान',
+  'instructor_ws_sub': 'परिदृश्य डिजाइन, आरएफ देरी इंजेक्शन और लाइव निगरानी',
+  'participant_workspace': 'प्रतिभागी कार्यस्थान',
+  'participant_ws_sub': 'टर्मिनल प्रेषण इंटरफ़ेस और संदेश कतार',
+  'training_docs': 'प्रशिक्षण दस्तावेज',
+  'training_docs_sub': 'मानक संचालन प्रक्रियाएं और मंच मैनुअल',
+  'exercise_reports': 'अभ्यास रिपोर्ट',
+  'exercise_reports_sub': 'ऐतिहासिक प्रदर्शन मेट्रिक्स और AAR विश्लेषिकी',
+
+  // Footer
+  'footer_disclaimer_title': 'अस्वीकरण और प्रोटोटाइप नोटिस:',
+  'footer_disclaimer_text': 'स्वतंत्र प्रशिक्षण प्रोटोटाइप। आधिकारिक भारत सरकार की सेवा नहीं है। इस एप्लिकेशन के भीतर उत्पन्न सभी परिदृश्य, संदेश और टेलीमेट्री सिंथेटिक हैं और पूरी तरह से शैक्षिक और परिचालन सिमुलेशन प्रशिक्षण के लिए हैं।',
+  'footer_navigation': 'नेविगेशन',
+  'footer_workspaces': 'कार्यस्थान',
+  'footer_helpdesk': 'हेल्पडेस्क और संपर्क',
+  'footer_tagline': 'निर्णय लचीलेपन के लिए डिज़ाइन किया गया।'
 };
 
 export const LanguageProvider = ({ children }) => {
-  const [lang, setLang] = useState('EN');
+  const [lang, setLangState] = useState(() => {
+    try {
+      const saved = localStorage.getItem('op_fog_lang');
+      if (saved) return saved.toUpperCase().trim();
+    } catch (e) {}
+    return 'EN';
+  });
+
+  const setLang = (newLang) => {
+    const normalized = typeof newLang === 'string' ? newLang.toUpperCase().trim() : newLang;
+    setLangState(normalized);
+    try {
+      localStorage.setItem('op_fog_lang', normalized);
+    } catch (e) {}
+  };
+
+  const currentLang = (lang || '').toString().toUpperCase().trim();
+  const isHindi = currentLang === 'HI' || currentLang === 'HINDI' || currentLang === 'HI-IN';
 
   const t = (key, defaultEnglish) => {
-    if (lang === 'HI' && HINDI_DICTIONARY[key]) {
+    if (isHindi && HINDI_DICTIONARY[key]) {
       return HINDI_DICTIONARY[key];
     }
     return defaultEnglish;
@@ -128,3 +164,4 @@ export const useLanguage = () => {
   }
   return context;
 };
+

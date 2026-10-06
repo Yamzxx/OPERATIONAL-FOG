@@ -13,8 +13,7 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
         <div className="gov-disclaimer-box">
           <ShieldAlert size={20} style={{ color: '#EAB308', flexShrink: 0 }} />
           <div>
-            <strong>DISCLAIMER & PROTOTYPE NOTICE:</strong> Independent training prototype. Not an official Government of India service. 
-            All scenarios, messages, and telemetry generated within this application are synthetic and intended strictly for educational and operational simulation training.
+            <strong>{t('footer_disclaimer_title', 'DISCLAIMER & PROTOTYPE NOTICE:')}</strong> {t('footer_disclaimer_text', 'Independent training prototype. Not an official Government of India service. All scenarios, messages, and telemetry generated within this application are synthetic and intended strictly for educational and operational simulation training.')}
           </div>
         </div>
 
@@ -35,7 +34,7 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
 
           {/* Nav Links Column */}
           <div>
-            <div className="gov-footer-col-title">Navigation</div>
+            <div className="gov-footer-col-title">{t('footer_navigation', 'Navigation')}</div>
             <ul className="gov-footer-links">
               <li><a href="#home">{t('nav_home', 'Home')}</a></li>
               <li><a href="#about">{t('nav_about', 'About the Platform')}</a></li>
@@ -47,19 +46,19 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
 
           {/* Platform Workspaces */}
           <div>
-            <div className="gov-footer-col-title">Workspaces</div>
+            <div className="gov-footer-col-title">{t('footer_workspaces', 'Workspaces')}</div>
             <ul className="gov-footer-links">
-              <li><a href="#instructor">Instructor Console</a></li>
-              <li><a href="#participant">Participant Workspace</a></li>
-              <li><a href="#aar">After-Action Review</a></li>
-              <li><a href="#docs">Platform Manual & SOPs</a></li>
+              <li><a href="#instructor">{t('instructor_console', 'Instructor Console')}</a></li>
+              <li><a href="#participant">{t('participant_workspace', 'Participant Workspace')}</a></li>
+              <li><a href="#aar">{t('after_action_review', 'After-Action Review')}</a></li>
+              <li><a href="#docs">{t('training_docs', 'Platform Manual & SOPs')}</a></li>
               <li><a href="#api">API & Scenario Specs</a></li>
             </ul>
           </div>
 
           {/* Contact / Helpdesk Placeholder */}
           <div>
-            <div className="gov-footer-col-title">Helpdesk & Contact</div>
+            <div className="gov-footer-col-title">{t('footer_helpdesk', 'Helpdesk & Contact')}</div>
             <div style={{ fontSize: '13px', color: '#CBD5E1', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Phone size={14} style={{ color: 'var(--color-gold-accent)' }} />
@@ -80,7 +79,7 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
         {/* Bottom Bar */}
         <div className="gov-footer-bottom">
           <div>
-            © {new Date().getFullYear()} Operational Fog Training Platform. Designed for Decision Resilience.
+            © {new Date().getFullYear()} Operational Fog Training Platform. {t('footer_tagline', 'Designed for Decision Resilience.')}
           </div>
           
           <div style={{ display: 'flex', gap: '16px' }}>

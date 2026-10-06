@@ -32,7 +32,7 @@ export const UpdatesAndResources = ({ onOpenGalleryModal }) => {
             </p>
           </div>
           <span style={{ fontSize: '11px', background: '#FEF3C7', color: '#92400E', padding: '2px 8px', border: '1px solid #FCD34D', fontWeight: 600 }}>
-            PROTOTYPE NOTICE
+            {t('prototype_notice', 'PROTOTYPE NOTICE')}
           </span>
         </div>
 
@@ -41,7 +41,7 @@ export const UpdatesAndResources = ({ onOpenGalleryModal }) => {
           <div className="gov-panel-box">
             <div className="gov-panel-header-strip">
               <BookOpen size={16} />
-              <span>Training Curricula & SOPs</span>
+              <span>{t('training_curricula_sops', 'Training Curricula & SOPs')}</span>
             </div>
             <div className="gov-panel-body">
               <div className="gov-resource-item">
@@ -68,7 +68,7 @@ export const UpdatesAndResources = ({ onOpenGalleryModal }) => {
           <div className="gov-panel-box">
             <div className="gov-panel-header-strip" style={{ backgroundColor: 'var(--color-terracotta)' }}>
               <Bell size={16} />
-              <span>Announcements & Platform Updates</span>
+              <span>{t('announcements_updates', 'Announcements & Platform Updates')}</span>
             </div>
             <div className="gov-panel-body">
               <div className="gov-resource-item">
@@ -95,7 +95,7 @@ export const UpdatesAndResources = ({ onOpenGalleryModal }) => {
           <div className="gov-panel-box">
             <div className="gov-panel-header-strip" style={{ backgroundColor: '#1E293B' }}>
               <ImageIcon size={16} />
-              <span>Exercise Gallery</span>
+              <span>{t('exercise_gallery', 'Exercise Gallery')}</span>
             </div>
             <div className="gov-panel-body">
               <img 
