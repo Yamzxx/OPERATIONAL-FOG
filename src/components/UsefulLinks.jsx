@@ -1,7 +1,10 @@
 import React from 'react';
 import { Monitor, UserCheck, FileText, BarChart2, ExternalLink } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
 
 export const UsefulLinks = ({ onLinkClick }) => {
+  const { t } = useLanguage();
+
   const links = [
     {
       id: 'instructor',
@@ -33,7 +36,7 @@ export const UsefulLinks = ({ onLinkClick }) => {
     <section className="gov-section gov-section-light">
       <div className="gov-container">
         <div className="gov-section-header">
-          <h2 className="gov-section-title">Useful Links</h2>
+          <h2 className="gov-section-title">{t('useful_links_title', 'Useful Links')}</h2>
           <span style={{ fontSize: '12px', color: '#64748B', fontWeight: 600 }}>QUICK ACCESS PORTAL</span>
         </div>
 
@@ -67,3 +70,4 @@ export const UsefulLinks = ({ onLinkClick }) => {
     </section>
   );
 };
+

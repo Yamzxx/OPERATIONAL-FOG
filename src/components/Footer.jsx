@@ -1,8 +1,11 @@
 import React from 'react';
 import { NationalEmblem, IndianFlag } from './EmblemAndFlag';
 import { ShieldAlert, Mail, Phone, MapPin, ExternalLink } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
 
 export const Footer = ({ onOpenDisclaimerModal }) => {
+  const { t } = useLanguage();
+
   return (
     <footer className="gov-footer">
       <div className="gov-container">
@@ -22,11 +25,11 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
               <NationalEmblem height={48} />
               <div>
                 <div className="gov-footer-title">OPERATIONAL FOG</div>
-                <div style={{ fontSize: '11px', color: '#94A3B8' }}>Communication Resilience Platform</div>
+                <div style={{ fontSize: '11px', color: '#94A3B8' }}>{t('comm_resilience_platform', 'Communication Resilience Platform')}</div>
               </div>
             </div>
             <p className="gov-footer-subtitle">
-              Simulating degraded communication, message latency, and out-of-order dispatches for decision-making training in high-friction tactical environments.
+              {t('footer_desc', 'Simulating degraded communication, message latency, and out-of-order dispatches for decision-making training in high-friction tactical environments.')}
             </p>
           </div>
 
@@ -34,11 +37,11 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
           <div>
             <div className="gov-footer-col-title">Navigation</div>
             <ul className="gov-footer-links">
-              <li><a href="#home">Home</a></li>
-              <li><a href="#about">About the Platform</a></li>
-              <li><a href="#modules">Training Modules</a></li>
-              <li><a href="#how-it-works">How It Works</a></li>
-              <li><a href="#updates">Updates & Resources</a></li>
+              <li><a href="#home">{t('nav_home', 'Home')}</a></li>
+              <li><a href="#about">{t('nav_about', 'About the Platform')}</a></li>
+              <li><a href="#modules">{t('nav_modules', 'Training Modules')}</a></li>
+              <li><a href="#how-it-works">{t('nav_how_it_works', 'How It Works')}</a></li>
+              <li><a href="#updates">{t('nav_updates', 'Updates & Resources')}</a></li>
             </ul>
           </div>
 
@@ -94,3 +97,4 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
     </footer>
   );
 };
+

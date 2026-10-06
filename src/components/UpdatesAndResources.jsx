@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { BookOpen, Bell, Image as ImageIcon, Download, ExternalLink, ShieldAlert } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
 
 export const UpdatesAndResources = ({ onOpenGalleryModal }) => {
   const [activeGalleryIndex, setActiveGalleryIndex] = useState(0);
+  const { t } = useLanguage();
 
   const galleryImages = [
     {
@@ -24,9 +26,9 @@ export const UpdatesAndResources = ({ onOpenGalleryModal }) => {
       <div className="gov-container">
         <div className="gov-section-header">
           <div>
-            <h2 className="gov-section-title">Updates and Resources</h2>
+            <h2 className="gov-section-title">{t('updates_resources_title', 'Updates and Resources')}</h2>
             <p style={{ fontSize: '13px', color: '#64748B', marginTop: '4px' }}>
-              Platform releases, exercise guidelines, and simulation log archives (Demo Content).
+              {t('updates_resources_sub', 'Platform releases, exercise guidelines, and simulation log archives (Demo Content).')}
             </p>
           </div>
           <span style={{ fontSize: '11px', background: '#FEF3C7', color: '#92400E', padding: '2px 8px', border: '1px solid #FCD34D', fontWeight: 600 }}>
@@ -136,3 +138,4 @@ export const UpdatesAndResources = ({ onOpenGalleryModal }) => {
     </section>
   );
 };
+

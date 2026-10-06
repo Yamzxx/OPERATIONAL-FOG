@@ -1,8 +1,11 @@
 import React from 'react';
 import { NationalEmblem, IndianFlag } from './EmblemAndFlag';
 import { Bell, ShieldAlert, Cpu } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
 
 export const GovernmentHeader = () => {
+  const { t } = useLanguage();
+
   return (
     <header className="gov-header">
       <div className="gov-container">
@@ -13,9 +16,9 @@ export const GovernmentHeader = () => {
             <IndianFlag width={30} height={20} />
             
             <div className="gov-title-group">
-              <span className="gov-title-org">Defences & Crisis Training Simulation System</span>
+              <span className="gov-title-org">{t('defence_crisis_training_system', 'Defences & Crisis Training Simulation System')}</span>
               <h1 className="gov-main-title">OPERATIONAL FOG</h1>
-              <span className="gov-subtitle">Communication Resilience & Decision-Making Training Platform</span>
+              <span className="gov-subtitle">{t('comm_resilience_decision_platform', 'Communication Resilience & Decision-Making Training Platform')}</span>
             </div>
           </div>
 
@@ -23,10 +26,10 @@ export const GovernmentHeader = () => {
             <div className="gov-ticker-box">
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold', marginBottom: '2px' }}>
                 <ShieldAlert size={14} style={{ color: '#B45309' }} />
-                <span>Simulated Network Latency Engine Active</span>
+                <span>{t('simulated_latency_active', 'Simulated Network Latency Engine Active')}</span>
               </div>
               <div style={{ fontSize: '11px', color: '#92400E' }}>
-                v2.4 Synthetic RF Delay & Packet Degradation Engine Ready for Operational Exercises.
+                {t('rf_delay_engine_ready', 'v2.4 Synthetic RF Delay & Packet Degradation Engine Ready for Operational Exercises.')}
               </div>
             </div>
           </div>
@@ -35,3 +38,4 @@ export const GovernmentHeader = () => {
     </header>
   );
 };
+
