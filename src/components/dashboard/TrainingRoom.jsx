@@ -57,11 +57,16 @@ function buildAuthHeaders(currentUser) {
 
 // Clock-sync: persist elapsed_seconds to backend every N seconds while running.
 // Fires-and-forgets; does NOT block the UI or throw on failure.
-function syncElapsedToBackend(exerciseId, elapsedSeconds) {
+// Auth headers required — PATCH /elapsed now requireRole(['instructor']).
+function syncElapsedToBackend(exerciseId, elapsedSeconds, currentUser) {
   if (!exerciseId) return;
   fetch(`${getApiBase()}/exercises/${exerciseId}/elapsed`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Service-Id': currentUser?.serviceId || '',
+      'X-User-Role': currentUser?.role || 'instructor'
+    },
     body: JSON.stringify({ elapsedSeconds })
   }).catch(() => {});
 }
@@ -170,8 +175,9 @@ export const TrainingRoom = ({
     const userRole = currentUser?.role || 'commander';
     try {
       // Participant messages (server enforces visibility — dropped events excluded)
+      // Role is sent via X-User-Role header; ?role= query param is no longer accepted.
       const msgData = await apiFetch(
-        `/exercises/${session.id}/messages?role=${encodeURIComponent(userRole)}`,
+        `/exercises/${session.id}/messages`,
         { headers: buildAuthHeaders(currentUser) }
       );
       if (Array.isArray(msgData.messages)) {
@@ -207,11 +213,11 @@ export const TrainingRoom = ({
     //   participant B refreshes → their decisions come from DB, not from stale React state.
     // Participants fetch their own decisions; instructors fetch all.
     try {
-      const serviceId = currentUser?.serviceId;
-      const decisionsUrl = isInstructor
-        ? `/exercises/${session.id}/decisions`
-        : `/exercises/${session.id}/decisions${serviceId ? `?submittedBy=${encodeURIComponent(serviceId)}` : ''}`;
+      // Participants automatically receive only their own decisions (backend-enforced by serviceId).
+      // Instructors receive all decisions. No client-side filtering needed.
+      const decisionsUrl = `/exercises/${session.id}/decisions`;
       const freshDecisions = await apiFetch(decisionsUrl, { headers: buildAuthHeaders(currentUser) });
+
       if (Array.isArray(freshDecisions)) {
         setDecisions(prev => {
           // Merge: keep local decisions not yet confirmed by backend, add any new backend ones
@@ -300,7 +306,7 @@ export const TrainingRoom = ({
       unsubscribe();
       // Persist the final clock position when unmounting
       if (session?.id) {
-        syncElapsedToBackend(session.id, engineRef.current?.elapsedSeconds || 0);
+        syncElapsedToBackend(session.id, engineRef.current?.elapsedSeconds || 0, currentUser);
       }
     };
     // scenario and session.elapsedSeconds are stable after mount
@@ -328,7 +334,7 @@ export const TrainingRoom = ({
     if (!isExerciseEnded && engineRef.current?.isRunning && !engineState.isPaused) {
       elapsedSyncRef.current = setInterval(() => {
         if (session?.id && engineRef.current) {
-          syncElapsedToBackend(session.id, engineRef.current.elapsedSeconds);
+          syncElapsedToBackend(session.id, engineRef.current.elapsedSeconds, currentUser);
         }
       }, 15000);
     }
