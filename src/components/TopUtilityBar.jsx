@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { IndianFlag } from './EmblemAndFlag';
 import { Globe, Eye, Type, Clock, Search, ShieldCheck } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
 
 export const TopUtilityBar = ({ 
   fontScale, 
@@ -11,7 +12,7 @@ export const TopUtilityBar = ({
   onOpenAccessibilityInfo
 }) => {
   const [timeString, setTimeString] = useState('');
-  const [lang, setLang] = useState('EN');
+  const { lang, setLang, t } = useLanguage();
 
   useEffect(() => {
     const updateClock = () => {
@@ -39,12 +40,12 @@ export const TopUtilityBar = ({
         <div className="gov-utility-left">
           <div className="gov-flag-badge">
             <IndianFlag width={22} height={14} />
-            <span>भारत सरकार | Government of India (Training Prototype)</span>
+            <span>{t('gov_india', 'Government of India (Training Prototype)')}</span>
           </div>
           <span style={{ opacity: 0.3 }}>|</span>
           <div className="gov-utility-item">
             <ShieldCheck size={13} style={{ color: '#C59B27' }} />
-            <span>Communication Resilience Platform</span>
+            <span>{t('comm_resilience_platform', 'Communication Resilience Platform')}</span>
           </div>
         </div>
 
@@ -85,7 +86,7 @@ export const TopUtilityBar = ({
             style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
           >
             <Eye size={12} />
-            {highContrast ? 'Standard Mode' : 'High Contrast'}
+            {highContrast ? t('standard_mode', 'Standard Mode') : t('high_contrast', 'High Contrast')}
           </button>
 
           <span style={{ opacity: 0.3 }}>|</span>
@@ -122,3 +123,4 @@ export const TopUtilityBar = ({
     </div>
   );
 };
+

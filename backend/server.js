@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
 import { migrate } from './db/migrate.js';
-import { authenticateUser, requireRole } from './middleware/auth.js';
+import { authenticateUser, makeResolveUser, requireRole } from './middleware/auth.js';
 import { 
   validateStateTransition, 
   evaluateScenarioEvents, 
@@ -34,11 +34,16 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000
 });
 
+// DB-based identity resolution — enriches req.user with dbRole and verified flag.
+// Runs after authenticateUser so every route sees an authoritative role.
+app.use(makeResolveUser(pool));
+
 async function queryDB(text, params) {
   const start = Date.now();
   const res = await pool.query(text, params);
   return res;
 }
+
 
 // -------------------------------------------------------------
 // 1. HEALTH & SYSTEM CHECK
@@ -249,11 +254,30 @@ function mapExerciseRow(r) {
   };
 }
 
+// GET exercises — instructors see all; participants see only exercises they are a member of.
 app.get(['/api/exercises', '/api/sessions'], async (req, res) => {
   try {
-    const result = await queryDB('SELECT * FROM exercises ORDER BY created_at DESC');
-    const list = result.rows.map(mapExerciseRow);
-    res.json(list);
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    let result;
+    if (effectiveRole === 'instructor') {
+      result = await queryDB('SELECT * FROM exercises ORDER BY created_at DESC');
+    } else {
+      // Scope to exercises where the participant's serviceId appears in participants_json
+      // or they are the creator. Uses a JSONB containment/text search as a practical
+      // approach for the prototype's JSONB participant list.
+      const sid = req.user?.serviceId;
+      if (!sid) {
+        return res.status(401).json({ error: 'Unauthorized: Service identity required to list exercises.' });
+      }
+      result = await queryDB(
+        `SELECT * FROM exercises
+         WHERE creator = $1
+            OR participants_json::text ILIKE $2
+         ORDER BY created_at DESC`,
+        [sid, `%${sid}%`]
+      );
+    }
+    res.json(result.rows.map(mapExerciseRow));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch exercise sessions', details: err.message });
   }
@@ -281,15 +305,15 @@ app.get(['/api/exercises/join/:code', '/api/sessions/join/:code', '/api/exercise
   }
 });
 
-app.get(['/api/exercises/code/:code', '/api/sessions/code/:code', '/api/exercises/:id'], async (req, res) => {
+app.get(['/api/exercises/code/:code', '/api/sessions/code/:code'], async (req, res) => {
   try {
-    const codeOrId = (req.params.code || req.params.id || '').trim();
+    const code = (req.params.code || '').trim();
     const result = await queryDB(
-      'SELECT * FROM exercises WHERE UPPER(session_code) = UPPER($1) OR id = $1',
-      [codeOrId]
+      'SELECT * FROM exercises WHERE UPPER(session_code) = UPPER($1)',
+      [code]
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: `Session with join code or ID "${codeOrId}" not found.` });
+      return res.status(404).json({ error: `Session with join code "${code}" not found.` });
     }
     res.json(mapExerciseRow(result.rows[0]));
   } catch (err) {
@@ -297,7 +321,42 @@ app.get(['/api/exercises/code/:code', '/api/sessions/code/:code', '/api/exercise
   }
 });
 
-app.post(['/api/exercises', '/api/sessions'], async (req, res) => {
+app.get(['/api/exercises/:id', '/api/sessions/:id'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const result = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [codeOrId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: `Session with join code or ID "${codeOrId}" not found.` });
+    }
+    const ex = result.rows[0];
+
+    // Authoritative exercise membership check for participants
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const sid = req.user?.serviceId;
+      if (!sid) {
+        return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+      }
+      const participants = typeof ex.participants_json === 'string'
+        ? JSON.parse(ex.participants_json)
+        : (ex.participants_json || []);
+      const isMember = participants.some(p => p.serviceId === sid) || ex.creator === sid;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not a member of this exercise session.' });
+      }
+    }
+
+    res.json(mapExerciseRow(ex));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to lookup exercise session', details: err.message });
+  }
+});
+
+// POST /api/exercises — instructor only; participants cannot create exercises.
+app.post(['/api/exercises', '/api/sessions'], requireRole(['instructor']), async (req, res) => {
   try {
     const s = req.body;
     const id = s.id || `sess-${Date.now()}`;
@@ -325,9 +384,14 @@ app.post(['/api/exercises', '/api/sessions'], async (req, res) => {
       return res.status(400).json({ error: 'Valid scenario reference or snapshot required to launch exercise.' });
     }
 
-    const creatorId = s.creator || req.user?.serviceId || 'OPS-8842-IND';
+    // Always use the verified server-side identity as creator — never trust client-supplied creator field.
+    const creatorId = req.user?.serviceId || s.creator;
+    if (!creatorId) {
+      return res.status(401).json({ error: 'Unauthorized: Cannot identify exercise creator.' });
+    }
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'instructor';
     const initialParticipants = s.participants || [
-      { id: `p-${Date.now()}`, serviceId: creatorId, displayName: `${creatorId} (Host)`, role: req.user?.role || 'instructor', status: 'Online', joinedAt: new Date().toISOString() }
+      { id: `p-${Date.now()}`, serviceId: creatorId, displayName: `${creatorId} (Host)`, role: effectiveRole, status: 'Online', joinedAt: new Date().toISOString() }
     ];
 
     const result = await queryDB(
@@ -396,7 +460,8 @@ app.post('/api/exercises/:id/transition', requireRole(['instructor']), async (re
 
 // PATCH: Persist simulation clock (elapsed_seconds) without changing status.
 // Called periodically while the exercise is running so refresh can restore the clock.
-app.patch('/api/exercises/:id/elapsed', async (req, res) => {
+// Only the instructor (clock owner) may update elapsed_seconds — prevents participants from spoofing the clock.
+app.patch('/api/exercises/:id/elapsed', requireRole(['instructor']), async (req, res) => {
   try {
     const { id } = req.params;
     const { elapsedSeconds } = req.body;
@@ -569,7 +634,8 @@ async function persistEventState(exerciseId, ev, index) {
 // POST: Idempotently seed all scenario events into communication_events as PENDING.
 // Called once when a participant/instructor first enters the Training Room.
 // Safe to call multiple times — ON CONFLICT (id) DO NOTHING prevents duplicates.
-app.post('/api/exercises/:id/events/seed', async (req, res) => {
+// Seeding events is an instructor/system operation — participants must not seed their own events.
+app.post('/api/exercises/:id/events/seed', requireRole(['instructor']), async (req, res) => {
   try {
     const { id } = req.params;
     const exRes = await queryDB(
@@ -638,8 +704,11 @@ app.post('/api/exercises/:id/events/seed', async (req, res) => {
 app.get('/api/exercises/:id/messages', async (req, res) => {
   try {
     const { id } = req.params;
-    // Accept role from header (auth middleware) or query param (cross-origin participant)
-    const roleFromQuery = req.query.role;
+
+    // Verify the requester has a service identity before returning any data
+    if (!req.user?.serviceId) {
+      return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+    }
 
     const exRes = await queryDB(
       'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
@@ -650,13 +719,27 @@ app.get('/api/exercises/:id/messages', async (req, res) => {
     }
     const ex = exRes.rows[0];
 
+    // Exercise membership check for participants — instructors see all exercises
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const participants = typeof ex.participants_json === 'string'
+        ? JSON.parse(ex.participants_json)
+        : (ex.participants_json || []);
+      const isMember = participants.some(p => p.serviceId === req.user.serviceId)
+        || ex.creator === req.user.serviceId;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not a member of this exercise.' });
+      }
+    }
+
     const snapshot = typeof ex.scenario_snapshot_json === 'string'
       ? JSON.parse(ex.scenario_snapshot_json)
       : ex.scenario_snapshot_json;
 
     // --- AUTHORITATIVE CLOCK: use the DB's elapsed_seconds, not a browser value ---
     const elapsed = ex.elapsed_seconds || 0;
-    const userRole = roleFromQuery || req.user?.role || 'commander';
+    // Role from X-User-Role header (already set by authenticateUser, query-param spoofing removed)
+    const userRole = effectiveRole;
 
     // Evaluate all scenario events deterministically at the authoritative elapsed time
     const scenarioEvents = snapshot?.events || [];
@@ -777,21 +860,39 @@ function mapDecisionRow(r) {
 }
 
 // GET decisions — returns decisions for an exercise.
-// Optional ?submittedBy= filter lets a participant retrieve only their own decisions.
-// Instructors omit the filter to see all participant decisions.
+// Instructors see all participant decisions.
+// Participants see only their own decisions (submitted_by = their serviceId) — backend enforced.
 app.get(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => {
   try {
+    const callerRole = req.user?.dbRole || req.user?.role || 'participant';
+    const callerServiceId = req.user?.serviceId;
+
+    if (!callerServiceId) {
+      return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+    }
+
     let exerciseId = req.params.id || req.query.sessionId;
-    const filterBy = req.query.submittedBy || null; // optional per-participant filter
 
     // Resolve session_code to an actual exercise ID if needed
     if (exerciseId) {
       const idRes = await queryDB(
-        'SELECT id FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+        'SELECT id, creator, participants_json FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
         [exerciseId]
       );
       if (idRes.rows.length > 0) {
-        exerciseId = idRes.rows[0].id;
+        const exRow = idRes.rows[0];
+        exerciseId = exRow.id;
+
+        // Exercise membership check for non-instructors
+        if (callerRole !== 'instructor') {
+          const participants = typeof exRow.participants_json === 'string'
+            ? JSON.parse(exRow.participants_json)
+            : (exRow.participants_json || []);
+          const isMember = participants.some(p => p.serviceId === callerServiceId) || exRow.creator === callerServiceId;
+          if (!isMember) {
+            return res.status(403).json({ error: 'Forbidden: You are not a member of this exercise session.' });
+          }
+        }
       }
     }
 
@@ -803,10 +904,20 @@ app.get(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => 
       conditions.push(`exercise_id = $${params.length + 1}`);
       params.push(exerciseId);
     }
-    if (filterBy) {
+
+    if (callerRole === 'instructor') {
+      // Instructors may optionally filter by ?submittedBy= to view a specific participant's decisions
+      const filterBy = req.query.submittedBy || null;
+      if (filterBy) {
+        conditions.push(`submitted_by = $${params.length + 1}`);
+        params.push(filterBy);
+      }
+    } else {
+      // Participants always see only their own decisions — query param override is ignored
       conditions.push(`submitted_by = $${params.length + 1}`);
-      params.push(filterBy);
+      params.push(callerServiceId);
     }
+
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
@@ -828,27 +939,48 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
       return res.status(400).json({ error: 'Exercise ID, decision title, and rationale are required.' });
     }
 
+    const callerServiceId = req.user?.serviceId;
+    if (!callerServiceId) {
+      return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+    }
+
     // Resolve session_code to actual exercise ID
     const exCheck = await queryDB(
-      'SELECT id, status FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      'SELECT id, status, creator, participants_json FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
       [exerciseId]
     );
     if (exCheck.rows.length === 0) {
       return res.status(404).json({ error: `Exercise "${exerciseId}" not found.` });
     }
-    const exStatus = exCheck.rows[0].status;
-    exerciseId = exCheck.rows[0].id; // use canonical DB id
+    const exRow = exCheck.rows[0];
+    const exStatus = exRow.status;
+    exerciseId = exRow.id; // use canonical DB id
+
+    // Authoritative Exercise membership check for non-instructors
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const participants = typeof exRow.participants_json === 'string'
+        ? JSON.parse(exRow.participants_json)
+        : (exRow.participants_json || []);
+      const isMember = participants.some(p => p.serviceId === callerServiceId) || exRow.creator === callerServiceId;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not a member of this exercise session.' });
+      }
+    }
 
     // Guard: reject submissions for completed/reviewed exercises
     if (exStatus === 'Completed' || exStatus === 'Reviewed') {
       return res.status(400).json({ error: 'Cannot submit decisions for a completed exercise session.' });
     }
 
-    // Stable decision ID — supplied by the client so idempotency works across retries
+    // Stable decision ID — supplied by the client for idempotency across retries.
     const id = d.id || `dec-${Date.now()}`;
     const timestamp = d.timestamp || new Date().toISOString();
-    const submittedBy = d.submittedBy || req.user?.serviceId || 'OPERATOR';
-    const submittedRole = d.submittedRole || req.user?.role || 'commander';
+
+    // submittedBy is always derived from the server-verified identity — never trusted from client body.
+    // This prevents a participant from impersonating another by setting d.submittedBy.
+    const submittedBy = callerServiceId;
+    const submittedRole = req.user?.dbRole || req.user?.role || d.submittedRole || 'commander';
 
     // Store both elapsed_minutes (legacy display) and elapsed_seconds (precise timing)
     const rawElapsedSeconds = d.elapsedSeconds !== undefined ? parseInt(d.elapsedSeconds, 10) : 0;
@@ -920,10 +1052,28 @@ function mapAARRow(r) {
   };
 }
 
-// GET /api/aars — index of all AAR records (for the AAR list panel)
+// GET /api/aars — index of AAR records (scoped by membership for participants)
 app.get('/api/aars', async (req, res) => {
   try {
-    const result = await queryDB('SELECT * FROM aars ORDER BY created_at DESC');
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    const sid = req.user?.serviceId;
+
+    if (!sid) {
+      return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+    }
+
+    let result;
+    if (effectiveRole === 'instructor') {
+      result = await queryDB('SELECT * FROM aars ORDER BY created_at DESC');
+    } else {
+      result = await queryDB(
+        `SELECT * FROM aars
+         WHERE creator = $1
+            OR participants_json::text ILIKE $2
+         ORDER BY created_at DESC`,
+        [sid, `%${sid}%`]
+      );
+    }
     res.json(result.rows.map(mapAARRow));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch AAR records', details: err.message });
@@ -933,7 +1083,6 @@ app.get('/api/aars', async (req, res) => {
 // GET /api/aars/exercise/:exerciseId — generate a live, authoritative AAR from PostgreSQL.
 // Fetches data from: exercises, participant_decisions, communication_events.
 // Upserts the result into the aars table (one AAR per exercise — idempotent).
-// This is the primary Feature 5 endpoint called when an exercise is completed.
 app.get('/api/aars/exercise/:exerciseId', async (req, res) => {
   try {
     const { exerciseId } = req.params;
@@ -947,6 +1096,22 @@ app.get('/api/aars/exercise/:exerciseId', async (req, res) => {
       return res.status(404).json({ error: `Exercise "${exerciseId}" not found.` });
     }
     const ex = exRes.rows[0];
+
+    // Exercise membership authorization check for participants
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const sid = req.user?.serviceId;
+      if (!sid) {
+        return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+      }
+      const participants = typeof ex.participants_json === 'string'
+        ? JSON.parse(ex.participants_json)
+        : (ex.participants_json || []);
+      const isMember = participants.some(p => p.serviceId === sid) || ex.creator === sid;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not authorized to view the AAR for this exercise.' });
+      }
+    }
 
     // 1. Live decisions from participant_decisions table
     const decRes = await queryDB(
@@ -1072,6 +1237,22 @@ app.get('/api/aars/:id', async (req, res) => {
       return res.status(404).json({ error: 'AAR not found.' });
     }
     const base = mapAARRow(aarRes.rows[0]);
+
+    // Exercise membership authorization check for non-instructors
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const sid = req.user?.serviceId;
+      if (!sid) {
+        return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+      }
+      const participants = typeof base.participants === 'string'
+        ? JSON.parse(base.participants)
+        : (base.participants || []);
+      const isMember = participants.some(p => p.serviceId === sid) || base.creator === sid;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not authorized to view this AAR.' });
+      }
+    }
 
     // Enrich with live records if an exercise_id is linked
     if (base.exerciseId) {
