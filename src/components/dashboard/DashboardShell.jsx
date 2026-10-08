@@ -109,7 +109,7 @@ export const DashboardShell = ({
     storageService.addDecision(sessionId, decisionData);
   };
 
-  const handleEndExercise = (session, decisions, durationMinutes, events = []) => {
+  const handleEndExercise = (session, decisions, durationMinutes, events = [], asymmetryMatrix = [], teamMessages = []) => {
     // Update session status
     if (session.sessionCode) {
       multiplayerEngine.endExercise(session.sessionCode);
@@ -132,6 +132,8 @@ export const DashboardShell = ({
       decisionsCount: decisions.length,
       decisions,
       events: events.length > 0 ? events : (activeScenario?.events || []),
+      asymmetryMatrix: asymmetryMatrix.length > 0 ? asymmetryMatrix : [],
+      teamMessages: teamMessages.length > 0 ? teamMessages : (session.teamMessages || []),
       participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
     });
 
@@ -169,6 +171,7 @@ export const DashboardShell = ({
         onSignOut={onSignOut}
         collapsed={collapsed}
         setCollapsed={setCollapsed}
+        hasActiveTraining={!!activeTrainingSession}
       />
 
       {/* Main Content Area */}
@@ -189,6 +192,9 @@ export const DashboardShell = ({
               scenarios={scenarios}
               sessions={sessions}
               aars={aars}
+              currentUser={currentUser}
+              activeTrainingSession={activeTrainingSession}
+              onStartScenario={handleStartScenario}
               onNavigate={(view) => setActiveView(view)}
               onOpenCreateScenario={() => {
                 setScenarioToEdit(null);

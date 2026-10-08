@@ -30,6 +30,9 @@ class MultiplayerEngine {
     this.listeners = [];
 
     if (this.channel) {
+      if (typeof this.channel.unref === 'function') {
+        this.channel.unref();
+      }
       this.channel.onmessage = (event) => {
         this.notifyListeners(event.data);
       };
@@ -212,21 +215,25 @@ class MultiplayerEngine {
           })
         });
 
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || `Invalid Join Code "${cleanCode}". Session not found in database.`);
+        if (res.ok) {
+          const data = await res.json();
+          // Successfully joined via PostgreSQL backend
+          this.updateSession(data);
+          this.broadcast('PARTICIPANT_JOINED', { sessionCode: cleanCode, participant: { serviceId, displayName, role } });
+          return data;
+        } else {
+          // Backend returned error (e.g. 404), fall through to local fallback if local session exists
+          const localSession = this.getSessionByCode(cleanCode);
+          if (!localSession) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || `Invalid Join Code "${cleanCode}". Session not found in database.`);
+          }
         }
-
-        // Successfully joined via PostgreSQL backend
-        this.updateSession(data);
-        this.broadcast('PARTICIPANT_JOINED', { sessionCode: cleanCode, participant: { serviceId, displayName, role } });
-        return data;
       } catch (err) {
-        // If server responded with an explicit status error (e.g. 404, 400), rethrow immediately
-        if (err.message && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
+        const localSession = this.getSessionByCode(cleanCode);
+        if (!localSession) {
           throw err;
         }
-        console.warn('Backend API server offline during join, attempting local fallback:', err.message);
       }
     }
 
@@ -283,21 +290,49 @@ class MultiplayerEngine {
 
   // Add team message
   sendTeamMessage(sessionCode, { senderId, senderName, senderRole, text }) {
-    const session = this.getSessionByCode(sessionCode);
-    if (!session) return null;
+    if (!text || !text.trim()) return null;
+    let session = this.getSessionByCode(sessionCode);
+    if (!session) {
+      const sessions = this.getSessions();
+      session = sessions.find(s => s.id === sessionCode || s.sessionCode === sessionCode);
+      if (!session) {
+        session = {
+          id: sessionCode,
+          sessionCode: sessionCode,
+          name: 'Exercise Session',
+          participants: [{ serviceId: senderId, displayName: senderName, role: senderRole, status: 'Online' }],
+          teamMessages: []
+        };
+      }
+    }
 
     const newMessage = {
-      id: `msg-${Date.now()}`,
-      senderId,
-      senderName,
-      senderRole,
+      id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      senderId: senderId || 'Operator',
+      senderName: senderName || 'Operator',
+      senderRole: senderRole || 'team_leader',
       text: text.trim(),
       timestamp: new Date().toISOString()
     };
 
     session.teamMessages = [...(session.teamMessages || []), newMessage];
     this.updateSession(session);
-    this.broadcast('TEAM_MESSAGE_SENT', { sessionCode, message: newMessage });
+    this.broadcast('TEAM_MESSAGE_SENT', { sessionCode: session.sessionCode || sessionCode, message: newMessage, session });
+
+    // Also push to backend API asynchronously if available
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(session.sessionCode || sessionCode)}/team-messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: text.trim(),
+          senderId,
+          senderName,
+          senderRole
+        })
+      }).catch(() => {});
+    }
+
     return newMessage;
   }
 

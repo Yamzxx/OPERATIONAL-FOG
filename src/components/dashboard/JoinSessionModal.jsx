@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, LogIn, Users, CheckCircle, ShieldAlert } from 'lucide-react';
+import { X, LogIn, Users } from 'lucide-react';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 
 export const JoinSessionModal = ({ 
@@ -9,8 +9,8 @@ export const JoinSessionModal = ({
   onJoinedSession 
 }) => {
   const [sessionCode, setSessionCode] = useState('');
-  const [displayName, setDisplayName] = useState(currentUser?.serviceId || 'Participant Node Alpha');
-  const [role, setRole] = useState('commander');
+  const [displayName, setDisplayName] = useState(currentUser?.serviceId || 'Trainee');
+  const [role, setRole] = useState(currentUser?.role || 'team_leader');
   const [errorMsg, setErrorMsg] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
@@ -23,7 +23,7 @@ export const JoinSessionModal = ({
     setIsLoading(true);
 
     if (!sessionCode.trim()) {
-      setErrorMsg('Please enter a valid Join Code.');
+      setErrorMsg('Please enter a valid room code.');
       setIsLoading(false);
       return;
     }
@@ -38,7 +38,7 @@ export const JoinSessionModal = ({
       onJoinedSession(session);
       onClose();
     } catch (err) {
-      setErrorMsg(err.message || 'Failed to join session. Please verify the Join Code.');
+      setErrorMsg(err.message || 'Failed to join. Please check the room code.');
     } finally {
       setIsLoading(false);
     }
@@ -46,12 +46,12 @@ export const JoinSessionModal = ({
 
   return (
     <div className="gov-modal-overlay" onClick={onClose}>
-      <div className="gov-modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+      <div className="gov-modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
         <div className="gov-modal-header" style={{ backgroundColor: 'var(--color-primary-navy)', color: '#FFF' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Users size={18} style={{ color: 'var(--color-gold-accent)' }} />
+            <Users size={18} style={{ color: '#FBBF24' }} />
             <span style={{ color: '#FFF', fontFamily: 'var(--font-family-serif)', fontWeight: 'bold' }}>
-              Join Multiplayer Exercise Session
+              Join Team Exercise Room
             </span>
           </div>
           <button className="gov-modal-close" onClick={onClose} style={{ color: '#FFF' }}>
@@ -61,18 +61,18 @@ export const JoinSessionModal = ({
 
         <form onSubmit={handleSubmit} className="gov-modal-body">
           {errorMsg && (
-            <div style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B', padding: '8px 12px', fontSize: '12px', marginBottom: '14px', borderRadius: '2px' }}>
+            <div style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5', color: '#991B1B', padding: '8px 12px', fontSize: '12px', marginBottom: '12px', borderRadius: '4px' }}>
               {errorMsg}
             </div>
           )}
 
           <div className="gov-form-group">
-            <label className="gov-form-label">Session Join Code</label>
+            <label className="gov-form-label">Room Code</label>
             <input 
               type="text" 
               className="gov-form-input" 
-              style={{ textTransform: 'uppercase', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold', fontSize: '16px' }}
-              placeholder="e.g. FOG-7429" 
+              style={{ textTransform: 'uppercase', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold', fontSize: '15px' }}
+              placeholder="e.g. ALPHA-942" 
               value={sessionCode} 
               onChange={(e) => setSessionCode(e.target.value)}
               required 
@@ -80,11 +80,11 @@ export const JoinSessionModal = ({
           </div>
 
           <div className="gov-form-group">
-            <label className="gov-form-label">Participant Display Name</label>
+            <label className="gov-form-label">Your Name</label>
             <input 
               type="text" 
               className="gov-form-input" 
-              placeholder="e.g. Commander Alpha" 
+              placeholder="e.g. Rahul / Officer 1" 
               value={displayName} 
               onChange={(e) => setDisplayName(e.target.value)}
               required 
@@ -92,22 +92,23 @@ export const JoinSessionModal = ({
           </div>
 
           <div className="gov-form-group">
-            <label className="gov-form-label">Assigned Tactical Role</label>
+            <label className="gov-form-label">Select Your Role</label>
             <select className="gov-form-select" value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="commander">Commander (Strategic Command)</option>
-              <option value="field_unit">Field Unit / Forward Observer</option>
-              <option value="logistics">Logistics Hub Coordinator</option>
-              <option value="signals">Signals & Relay Officer</option>
+              <option value="team_leader">Team Leader (Makes final decisions, messages can be delayed)</option>
+              <option value="land_member">Land Member (Receives ground patrol reports)</option>
+              <option value="air_member">Air Member (Receives radar & aerial alerts)</option>
+              <option value="cyber_ew_member">Cyber/EW Member (Receives jamming & signals alerts)</option>
+              <option value="instructor">Instructor (Observer / Controller)</option>
             </select>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #E2E8F0', paddingTop: '14px', marginTop: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid #E2E8F0', paddingTop: '12px', marginTop: '14px' }}>
             <button type="button" className="gov-btn gov-btn-secondary" onClick={onClose} disabled={isLoading}>
               Cancel
             </button>
             <button type="submit" className="gov-btn gov-btn-primary" disabled={isLoading}>
-              <LogIn size={15} />
-              <span>{isLoading ? 'Connecting to Session...' : 'Connect to Session'}</span>
+              <LogIn size={14} />
+              <span>Join Room</span>
             </button>
           </div>
         </form>

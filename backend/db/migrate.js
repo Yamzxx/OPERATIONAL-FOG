@@ -25,23 +25,128 @@ const DEFAULT_SCENARIOS = [
   {
     id: 'scen-sih-2026',
     code: 'SCEN-SIH-2026',
-    title: 'SIH Demo Scenario — Joint Tactical Node Resilience',
-    category: 'Joint Operations',
-    shortDesc: 'Official Smart India Hackathon demonstration scenario featuring normal dispatches, 300s signal latency, dropped dispatches, and conflicting intel feeds.',
-    objective: 'Evaluate tactical decision discipline when primary telemetry links experience RF attenuation and contradictory reconnaissance dispatches.',
-    duration: '45 mins (SIH Demo Template)',
-    difficulty: 'High Friction',
+    title: 'Operation Border Shield — Ambush or False Alarm?',
+    category: 'Joint Tactical Operation',
+    shortDesc: 'Your squad must escort a medical convoy through mountain Sector Alpha. Enemy jammers are active, causing radio delays, scrambled radar, and lost messages.',
+    objective: 'Make sound decisions despite communication friction: cross-check facts with your team in chat before ordering troops to move forward.',
+    duration: '5 Mins (Fast-Forward Available)',
+    difficulty: 'Multi-Domain Friction',
     status: 'Ready',
     version: 1,
     creator: 'OPS-8842-IND',
     events: [
-      { id: 'sih-ev-1', time: '00:00', title: 'Initial Tactical Dispatch', type: 'info', deliveryBehavior: 'normal', delaySeconds: 0, intendedRecipient: 'all', content: 'Joint Command orders forward unit alignment along Sector Bravo. Telemetry channels operational.', instructorNotes: 'Baseline event delivered at exercise start.' },
-      { id: 'sih-ev-2', time: '05:00', title: 'Signal Attenuation Warning', type: 'warning', deliveryBehavior: 'delayed', delaySeconds: 300, intendedRecipient: 'all', content: 'RF jamming detected. Secondary satellite link experiencing 300-second latency.', instructorNotes: 'Tests participant caution when dealing with delayed dispatches.' },
-      { id: 'sih-ev-3', time: '12:00', title: 'RF Blackout (Dropped Dispatch)', type: 'alert', deliveryBehavior: 'dropped', delaySeconds: 0, intendedRecipient: 'all', content: 'Patrol Bravo emergency beacon update. Link dropped due to terrain masking.', instructorNotes: 'Message is dropped from participant view but recorded in instructor audit log.' },
-      { id: 'sih-ev-4', time: '18:00', title: 'Forward Recon Update A', type: 'info', deliveryBehavior: 'normal', delaySeconds: 0, intendedRecipient: 'commander', content: 'Reconnaissance Patrol Alpha reports Sector Bravo route clear of obstructions.', instructorNotes: 'First intel report (delivered to Commander).' },
-      { id: 'sih-ev-5', time: '25:00', title: 'Satellite Imagery Feed B (Conflicting)', type: 'warning', deliveryBehavior: 'conflicting', delaySeconds: 0, intendedRecipient: 'all', content: 'Thermal imagery feed Bravo indicates heavy route obstruction at Sector Bravo grid 44-B.', instructorNotes: 'Contradicts Patrol Alpha report. Forces participant to record verification rationale.' },
-      { id: 'sih-ev-6', time: '30:00', title: 'Intercepted Signals Intel C (Conflicting Report 2)', type: 'warning', deliveryBehavior: 'conflicting', delaySeconds: 0, intendedRecipient: 'all', content: 'Electronic warfare intercept indicates enemy decoy emitter active at Sector Bravo grid 44-B.', instructorNotes: 'Second conflicting report providing alternate explanation for thermal imagery.' },
-      { id: 'sih-ev-7', time: '35:00', title: 'Truncated Supply Order D (Incomplete Report)', type: 'warning', deliveryBehavior: 'incomplete', delaySeconds: 0, intendedRecipient: 'all', content: 'Resupply dispatch received: "Hold position at grid [DATA CORRUPTED] until secondary convoy arrives at..."', instructorNotes: 'Incomplete information dispatch requiring contingent decision rationale.' }
+      {
+        id: 'sih-ev-1',
+        time: '00:05',
+        title: 'Forward Scout: Route Alpha Check',
+        domain: 'LAND',
+        type: 'info',
+        confidence: '80%',
+        content: 'Forward scout confirms Route Alpha is clear of enemy roadblocks. 80% confidence.',
+        instructorNotes: 'Ground Truth: Route is clear. Land gets it immediately; Leader delayed 20s; Air gets blind spot warning; Cyber/EW dropped.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'delayed', delaySeconds: 20, content: 'Forward scout reports Route Alpha is clear. Confidence 60% (Arrived with 20s delay).', confidence: '60%' },
+          land_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Forward scout confirms Route Alpha is clear of enemy roadblocks. 80% confidence.', confidence: '80%' },
+          air_member: { deliveryBehavior: 'incomplete', delaySeconds: 0, content: 'Forward scout reports Route Alpha clear [AIR RADAR BLIND SPOT - ROAD CROSSING UNVERIFIED]...', confidence: 'Partial' },
+          cyber_ew_member: { deliveryBehavior: 'dropped', reason: 'Blocked by directional enemy radio jammer' }
+        }
+      },
+      {
+        id: 'sih-ev-2',
+        time: '00:25',
+        title: 'Drone Alert: Approaching Aircraft',
+        domain: 'AIR',
+        type: 'warning',
+        confidence: '90%',
+        content: 'Air radar detects 2 low-flying surveillance drones heading toward your squad at 140 knots.',
+        instructorNotes: 'Ground Truth: Real physical drones. Air gets normal alert; Cyber/EW intercepts deceptive radio decoy; Land static.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'delayed', delaySeconds: 30, content: 'Air alert received with 30s lag: 2 unidentified aircraft heading toward team position.', confidence: '75%' },
+          land_member: { deliveryBehavior: 'incomplete', delaySeconds: 0, content: 'Air alert: low-flying objects [RADIO STATIC - FREQUENCY CUT OFF]...', confidence: 'Partial' },
+          air_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Air radar detects 2 low-flying surveillance drones heading toward your squad at 140 knots. 90% confidence.', confidence: '90%' },
+          cyber_ew_member: { deliveryBehavior: 'conflicting', delaySeconds: 0, content: 'Signals intercept: Enemy using electronic decoys! These may be fake radar blips, not real drones. 60% confidence.', confidence: '60%' }
+        }
+      },
+      {
+        id: 'sih-ev-3',
+        time: '00:50',
+        title: 'Enemy Jammer Hits Main Radio',
+        domain: 'CYBER',
+        type: 'alert',
+        confidence: '95%',
+        content: 'Enemy radio jammer active! Main satellite radio link is knocked out. Squad must use backup Team Chat.',
+        instructorNotes: 'Ground Truth: Radio jammed. Cyber/EW knows immediately; Land & Air dropped; Leader delayed 25s.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'delayed', delaySeconds: 25, content: 'Satellite radio link degraded. High communication lag expected across team channels.', confidence: '70%' },
+          land_member: { deliveryBehavior: 'dropped', reason: 'Satellite uplink dropped before message delivery' },
+          air_member: { deliveryBehavior: 'dropped', reason: 'Satellite uplink dropped before message delivery' },
+          cyber_ew_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'CRITICAL ALERT: Enemy jammer has knocked out main satellite radio! Use Team Chat to coordinate.', confidence: '95%' }
+        }
+      },
+      {
+        id: 'sih-ev-4',
+        time: '01:15',
+        title: 'Supply Convoy Bravo Status',
+        domain: 'EW',
+        type: 'warning',
+        confidence: '85%',
+        content: 'Medical Convoy Bravo has temporarily stopped at Mile 44 due to a fallen tree blocking the road.',
+        instructorNotes: 'Ground Truth: Convoy stopped by fallen tree. Land normal; Air camera sees conflicting movement; Leader missing location.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'incomplete', delaySeconds: 0, content: 'Convoy Bravo [LOCATION CUT OFF] requesting escort assistance...', confidence: 'Partial' },
+          land_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Convoy Bravo halted at Mile 44 due to a fallen tree. Clearing road now. 85% confidence.', confidence: '85%' },
+          air_member: { deliveryBehavior: 'conflicting', delaySeconds: 0, content: 'Drone camera scan shows Convoy Bravo moving forward normally without stopping. 70% confidence.', confidence: '70%' },
+          cyber_ew_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Emergency transponder beacon confirmed at Mile 44. Beacon validated.', confidence: '90%' }
+        }
+      },
+      {
+        id: 'sih-ev-5',
+        time: '01:45',
+        title: 'Command Directive: Move to Extraction',
+        domain: 'JOINT',
+        type: 'info',
+        confidence: '100%',
+        content: 'Headquarters orders the entire team to advance to Extraction Point at 02:00. Verify all unit positions.',
+        instructorNotes: 'Ground Truth: Advance order. Leader & Air on time; Land & Cyber/EW delayed by 30s.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Headquarters orders advance to Extraction Point at 02:00. Verify all unit positions. 100% confidence.', confidence: '100%' },
+          land_member: { deliveryBehavior: 'delayed', delaySeconds: 30, content: 'Advance order received with delay: timed for 02:00. Verify positions.', confidence: '80%' },
+          air_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Headquarters orders advance to Extraction Point at 02:00. Air support aligned.', confidence: '90%' },
+          cyber_ew_member: { deliveryBehavior: 'delayed', delaySeconds: 20, content: 'Advance order received with delay. Electronic clearance requested.', confidence: '85%' }
+        }
+      },
+      {
+        id: 'sih-ev-6',
+        time: '02:15',
+        title: 'Hostile Jammer Location Triangulated',
+        domain: 'EW',
+        type: 'warning',
+        confidence: '85%',
+        content: 'Signals Intelligence triangulates enemy radio jammer active on Hill 52.',
+        instructorNotes: 'Ground Truth: Active jammer on Hill 52. Cyber/EW normal; Leader delayed; Land incomplete; Air dropped.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'delayed', delaySeconds: 20, content: 'Enemy jammer localized on Hill 52. Caution advised along northern ridge.', confidence: '85%' },
+          land_member: { deliveryBehavior: 'incomplete', delaySeconds: 0, content: 'Jammer active on [LOCATION CUT OFF] - maintain radio silence...', confidence: 'Partial' },
+          air_member: { deliveryBehavior: 'dropped', reason: 'High-altitude signal blocked by jamming' },
+          cyber_ew_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Signals Intelligence triangulates enemy radio jammer active on Hill 52. 95% confidence.', confidence: '95%' }
+        }
+      },
+      {
+        id: 'sih-ev-7',
+        title: 'Extraction Zone Perimeter Check',
+        time: '02:45',
+        domain: 'LAND',
+        type: 'info',
+        confidence: '90%',
+        content: 'Forward patrol confirms Extraction Zone perimeter is secure.',
+        instructorNotes: 'Ground Truth: Extraction perimeter secure. Air reports conflicting movement.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Forward patrol confirms Extraction Zone perimeter is secure. 90% confidence.', confidence: '90%' },
+          land_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Forward patrol confirms Extraction Zone perimeter is secure. 90% confidence.', confidence: '90%' },
+          air_member: { deliveryBehavior: 'conflicting', delaySeconds: 0, content: 'Aerial camera detects suspicious movement near northern edge of Extraction Zone. 65% confidence.', confidence: '65%' },
+          cyber_ew_member: { deliveryBehavior: 'delayed', delaySeconds: 25, content: 'Perimeter check acknowledgement received with delay.', confidence: '80%' }
+        }
+      }
     ]
   },
   {

@@ -5,20 +5,28 @@ import {
   Play, 
   Pause, 
   FastForward, 
-  ShieldAlert, 
   Send, 
   Square, 
   AlertTriangle, 
-  Eye, 
-  UserCheck, 
   CheckCircle,
   X,
-  Layers,
   HelpCircle,
-  MessageSquare,
-  Users
+  Users,
+  ChevronDown,
+  ChevronRight,
+  Wifi,
+  Activity,
+  ShieldAlert,
+  Info
 } from 'lucide-react';
-import { EventEngine, DELIVERY_STATUS, formatSecondsToMMSS } from '../../services/eventEngine';
+import { 
+  EventEngine, 
+  DOMAINS,
+  TRAINEE_ROLES,
+  ROLE_LABELS,
+  normalizeRole,
+  formatSecondsToMMSS 
+} from '../../services/eventEngine';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 import { TeamCoordinationPanel } from './TeamCoordinationPanel';
 import { useToast } from '../Toast';
@@ -32,6 +40,10 @@ export const TrainingRoom = ({
   existingDecisions = [] 
 }) => {
   const { showToast } = useToast();
+
+  const userRole = normalizeRole(currentUser?.role || 'team_leader');
+  const isInstructor = userRole === TRAINEE_ROLES.INSTRUCTOR;
+
   const [engineState, setEngineState] = useState({
     elapsedSeconds: 0,
     elapsedFormatted: '00:00',
@@ -43,7 +55,12 @@ export const TrainingRoom = ({
   });
 
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
-  const [activeTab, setActiveTab] = useState('participant'); // 'participant' | 'instructor'
+  // Default to instructor view if instructor, otherwise lock to participant view
+  const [activeTab, setActiveTab] = useState(isInstructor ? 'instructor' : 'participant');
+  // For instructor to preview what a specific trainee role sees
+  const [previewRole, setPreviewRole] = useState(TRAINEE_ROLES.TEAM_LEADER);
+  const [expandedEventId, setExpandedEventId] = useState(null);
+
   const [decisionTitle, setDecisionTitle] = useState('');
   const [rationale, setRationale] = useState('');
   const [confidence, setConfidence] = useState('Medium');
@@ -55,17 +72,39 @@ export const TrainingRoom = ({
 
   // Subscribe to real-time multiplayer updates
   useEffect(() => {
-    setLiveSession(session);
+    const code = session?.sessionCode || session?.id;
+    if (code) {
+      const existing = multiplayerEngine.getSessionByCode(code);
+      if (existing) {
+        setLiveSession({ ...existing });
+        if (existing.decisions) setDecisions([...existing.decisions]);
+      } else {
+        setLiveSession(session);
+      }
+    } else {
+      setLiveSession(session);
+    }
 
     const unsubscribeMP = multiplayerEngine.subscribe((event) => {
-      if (session?.sessionCode) {
-        const updated = multiplayerEngine.getSessionByCode(session.sessionCode);
+      const targetCode = session?.sessionCode || session?.id;
+      if (targetCode) {
+        const updated = multiplayerEngine.getSessionByCode(targetCode);
         if (updated) {
           setLiveSession({ ...updated });
           if (updated.decisions) {
             setDecisions([...updated.decisions]);
           }
         }
+      }
+      if (event?.type === 'TEAM_MESSAGE_SENT' && event?.payload?.message) {
+        setLiveSession(prev => {
+          const exists = (prev?.teamMessages || []).some(m => m.id === event.payload.message.id);
+          if (exists) return prev;
+          return {
+            ...prev,
+            teamMessages: [...(prev?.teamMessages || []), event.payload.message]
+          };
+        });
       }
     });
 
@@ -76,7 +115,9 @@ export const TrainingRoom = ({
 
   // Instantiate EventEngine on mount
   useEffect(() => {
-    const engine = new EventEngine(scenario);
+    const engine = new EventEngine(scenario, {
+      sessionSeed: session?.sessionCode || session?.id || scenario?.id || 'OP_FOG_DEFAULT_SEED'
+    });
     engineRef.current = engine;
     engine.start();
 
@@ -87,7 +128,7 @@ export const TrainingRoom = ({
     return () => {
       unsubscribe();
     };
-  }, [scenario]);
+  }, [scenario, session]);
 
   // Simulation timer interval loop
   useEffect(() => {
@@ -134,7 +175,7 @@ export const TrainingRoom = ({
       elapsedMinutes: Math.floor(engineState.elapsedSeconds / 60),
       elapsedTimeFormatted: engineState.elapsedFormatted,
       submittedBy: currentUser?.serviceId || 'Operator',
-      submittedRole: currentUser?.role || 'commander'
+      submittedRole: userRole
     };
 
     if (session?.sessionCode) {
@@ -144,96 +185,155 @@ export const TrainingRoom = ({
       setDecisions([...decisions, newDecision]);
     }
 
-    showToast(`Decision "${newDecision.title}" logged at T+${newDecision.elapsedTimeFormatted}.`, 'success');
+    showToast(`Decision "${newDecision.title}" recorded at ${newDecision.elapsedTimeFormatted}.`, 'success');
 
     setDecisionTitle('');
     setRationale('');
   };
 
   const handleSendTeamMessage = (text) => {
-    if (session?.sessionCode) {
-      multiplayerEngine.sendTeamMessage(session.sessionCode, {
-        senderId: currentUser?.serviceId || 'Operator',
-        senderName: currentUser?.serviceId || 'Operator',
-        senderRole: currentUser?.role || 'commander',
-        text
-      });
+    if (!text || !text.trim()) return;
+    const sessionCode = liveSession?.sessionCode || session?.sessionCode || liveSession?.id || session?.id || 'ALPHA-ROOM';
+
+    const newMsg = {
+      id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      senderId: currentUser?.serviceId || 'Trainee',
+      senderName: currentUser?.serviceId || 'Trainee',
+      senderRole: userRole,
+      text: text.trim(),
+      timestamp: new Date().toISOString()
+    };
+
+    // 1. Immediately update local state in current tab so user sees message instantly
+    setLiveSession(prev => ({
+      ...prev,
+      sessionCode: prev?.sessionCode || sessionCode,
+      teamMessages: [...(prev?.teamMessages || []), newMsg]
+    }));
+
+    // 2. Broadcast and persist via multiplayerEngine
+    multiplayerEngine.sendTeamMessage(sessionCode, {
+      senderId: currentUser?.serviceId || 'Trainee',
+      senderName: currentUser?.serviceId || 'Trainee',
+      senderRole: userRole,
+      text: text.trim()
+    });
+  };
+
+  // Trainee messages for active view
+  const currentViewRole = isInstructor && activeTab === 'participant' ? previewRole : userRole;
+  const participantMessages = engineRef.current ? engineRef.current.getParticipantMessages(currentViewRole) : [];
+  const asymmetryMatrix = engineRef.current ? engineRef.current.getAsymmetryMatrix() : [];
+  const groundTruthEvents = engineRef.current ? engineRef.current.getGroundTruthEvents() : [];
+
+  // Helper for domain color styling
+  const getDomainBadgeStyle = (domain) => {
+    switch (domain) {
+      case DOMAINS.LAND:
+        return { background: '#DCFCE7', color: '#15803D', border: '1px solid #86EFAC' };
+      case DOMAINS.AIR:
+        return { background: '#E0F2FE', color: '#0369A1', border: '1px solid #BAE6FD' };
+      case DOMAINS.CYBER:
+        return { background: '#F3E8FF', color: '#7E22CE', border: '1px solid #D8B4FE' };
+      case DOMAINS.EW:
+        return { background: '#FEF3C7', color: '#B45309', border: '1px solid #FCD34D' };
+      default:
+        return { background: '#F1F5F9', color: '#334155', border: '1px solid #CBD5E1' };
     }
   };
 
-  // Get participant visible messages
-  const userRole = currentUser?.role || 'participant';
-  const participantMessages = engineRef.current ? engineRef.current.getParticipantMessages(userRole) : [];
-  const instructorLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
+  // Helper for asymmetry matrix status cell styling
+  const getStatusBadgeStyle = (statusKey) => {
+    switch (statusKey) {
+      case 'delivered':
+        return { background: '#DCFCE7', color: '#15803D', border: '1px solid #86EFAC' };
+      case 'delayed':
+        return { background: '#FEF3C7', color: '#B45309', border: '1px solid #FCD34D' };
+      case 'dropped':
+        return { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' };
+      case 'partial':
+        return { background: '#F3E8FF', color: '#7E22CE', border: '1px solid #D8B4FE' };
+      case 'conflicting':
+        return { background: '#FFEDD5', color: '#C2410C', border: '1px solid #FDBA74' };
+      default:
+        return { background: '#F1F5F9', color: '#64748B', border: '1px solid #E2E8F0' };
+    }
+  };
 
   return (
-    <div style={{ minHeight: 'calc(100vh - 64px)', backgroundColor: '#F4F6F8', display: 'flex', flexDirection: 'column' }}>
-      {/* Top Banner Control Strip */}
+    <div style={{ minHeight: 'calc(100vh - 64px)', backgroundColor: '#F8FAFC', display: 'flex', flexDirection: 'column' }}>
+      
+      {/* 1. TOP HEADER BAR (CLEAN & SLEEK) */}
       <div 
         style={{
           backgroundColor: '#0F172A',
           color: '#FFFFFF',
           padding: '12px 24px',
-          borderBottom: '4px solid var(--color-terracotta)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           flexWrap: 'wrap',
-          gap: '16px'
+          gap: '14px',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ width: '36px', height: '36px', background: 'var(--color-terracotta)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '2px' }}>
-            <Radio size={20} />
+        {/* Left: Exercise Name & Room Code */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ width: '32px', height: '32px', background: '#2563EB', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px' }}>
+            <Radio size={18} />
           </div>
           <div>
-            <div style={{ fontSize: '10px', color: 'var(--color-gold-accent)', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>DETERMINISTIC SIMULATION ENGINE ACTIVE</span>
-              {liveSession?.sessionCode && (
-                <span style={{ background: 'var(--color-primary-navy)', color: '#FFF', padding: '1px 6px', borderRadius: '2px', fontFamily: 'monospace' }}>
-                  JOIN CODE: {liveSession.sessionCode}
-                </span>
-              )}
+            <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#FFFFFF' }}>
+              {liveSession?.name || session.name || scenario?.title}
             </div>
-            <div style={{ fontFamily: 'var(--font-family-serif)', fontSize: '18px', fontWeight: 'bold' }}>
-              {liveSession?.name || session.name}
-            </div>
+            {liveSession?.sessionCode && (
+              <div style={{ fontSize: '11px', color: '#94A3B8' }}>
+                Room Code: <strong style={{ color: '#FBBF24', fontFamily: 'monospace', letterSpacing: '1px' }}>{liveSession.sessionCode}</strong>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Engine Clock & Control Panel */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          {/* Engine Play/Pause & Speed */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1E293B', padding: '4px 8px', border: '1px solid #334155' }}>
+        {/* Center / Right: Controls & Timer */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          
+          {/* Timer Clock */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1E293B', padding: '6px 12px', borderRadius: '4px', border: '1px solid #334155', fontFamily: 'monospace', fontWeight: 'bold', fontSize: '14px', color: '#FBBF24' }}>
+            <Clock size={15} />
+            <span>⏱️ {engineState.elapsedFormatted}</span>
+          </div>
+
+          {/* Play/Pause & Speed Buttons */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1E293B', padding: '4px 8px', borderRadius: '4px', border: '1px solid #334155' }}>
             <button 
               onClick={handlePauseToggle} 
-              style={{ background: 'none', border: 'none', color: engineState.isPaused ? '#F59E0B' : '#4ADE80', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-              title={engineState.isPaused ? 'Resume Engine' : 'Pause Engine'}
+              style={{ background: 'none', border: 'none', color: engineState.isPaused ? '#FBBF24' : '#4ADE80', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }}
+              title={engineState.isPaused ? 'Resume Simulation' : 'Pause Simulation'}
             >
-              {engineState.isPaused ? <Play size={16} /> : <Pause size={16} />}
+              {engineState.isPaused ? <Play size={16} fill="#FBBF24" /> : <Pause size={16} fill="#4ADE80" />}
             </button>
 
             <button 
               onClick={handleStepForward} 
-              style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-              title="Step Forward 5 Seconds"
+              style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }}
+              title="Fast forward 5 seconds"
             >
               <FastForward size={14} />
             </button>
 
-            <span style={{ fontSize: '11px', color: '#CBD5E1', marginLeft: '4px' }}>Speed:</span>
+            <span style={{ fontSize: '11px', color: '#94A3B8', marginLeft: '4px' }}>Speed:</span>
             {[1, 2, 5].map(s => (
               <button
                 key={s}
                 onClick={() => setSpeedMultiplier(s)}
                 style={{
-                  background: speedMultiplier === s ? 'var(--color-gold-accent)' : '#334155',
-                  color: speedMultiplier === s ? '#000' : '#FFF',
+                  background: speedMultiplier === s ? '#2563EB' : '#334155',
+                  color: '#FFF',
                   border: 'none',
-                  fontSize: '10px',
+                  fontSize: '11px',
                   fontWeight: 'bold',
                   padding: '2px 6px',
-                  borderRadius: '2px',
+                  borderRadius: '3px',
                   cursor: 'pointer'
                 }}
               >
@@ -242,232 +342,368 @@ export const TrainingRoom = ({
             ))}
           </div>
 
-          {/* Clock Display */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1E293B', padding: '6px 12px', border: '1px solid #334155', fontFamily: 'monospace', fontWeight: 'bold', fontSize: '14px', color: '#F59E0B' }}>
-            <Clock size={14} />
-            <span>T+ {engineState.elapsedFormatted}</span>
-          </div>
+          {/* Instructor View Switch (Visible only to instructors) */}
+          {isInstructor && (
+            <div style={{ display: 'flex', background: '#1E293B', borderRadius: '4px', border: '1px solid #334155', overflow: 'hidden' }}>
+              <button
+                onClick={() => setActiveTab('instructor')}
+                style={{
+                  background: activeTab === 'instructor' ? '#2563EB' : 'transparent',
+                  color: '#FFF',
+                  border: 'none',
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                📊 Delivery Matrix
+              </button>
 
-          {/* View Tab Switcher */}
-          <div style={{ display: 'flex', background: '#1E293B', border: '1px solid #334155', padding: '2px' }}>
-            <button
-              onClick={() => setActiveTab('participant')}
-              style={{
-                background: activeTab === 'participant' ? 'var(--color-primary-navy)' : 'transparent',
-                color: '#FFF',
-                border: 'none',
-                padding: '4px 10px',
-                fontSize: '11px',
-                fontWeight: 'bold',
-                cursor: 'pointer'
-              }}
-            >
-              Participant View
-            </button>
+              <button
+                onClick={() => setActiveTab('participant')}
+                style={{
+                  background: activeTab === 'participant' ? '#059669' : 'transparent',
+                  color: '#FFF',
+                  border: 'none',
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                👤 Trainee View
+              </button>
+            </div>
+          )}
 
-            <button
-              onClick={() => setActiveTab('instructor')}
-              style={{
-                background: activeTab === 'instructor' ? 'var(--color-terracotta)' : 'transparent',
-                color: '#FFF',
-                border: 'none',
-                padding: '4px 10px',
-                fontSize: '11px',
-                fontWeight: 'bold',
-                cursor: 'pointer'
-              }}
-            >
-              Instructor Control ({engineState.droppedCount} Dropped)
-            </button>
-          </div>
-
-          {/* End Exercise Button */}
+          {/* Finish Exercise Button */}
           <button 
             onClick={() => setShowEndModal(true)}
             style={{
               backgroundColor: '#DC2626',
               color: '#FFF',
               border: 'none',
-              padding: '8px 14px',
+              padding: '6px 14px',
               fontSize: '12px',
               fontWeight: 'bold',
-              borderRadius: '2px',
+              borderRadius: '4px',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               gap: '6px'
             }}
           >
-            <Square size={14} />
-            <span>End Exercise</span>
+            <Square size={13} />
+            <span>Finish Exercise</span>
           </button>
         </div>
       </div>
 
-      {/* Main Content Area */}
+      {/* 2. SUB-HEADER / STATUS STRIP */}
+      <div 
+        style={{ 
+          backgroundColor: '#FFFFFF', 
+          borderBottom: '1px solid #E2E8F0', 
+          padding: '10px 24px', 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '12px'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* Active Role Badge */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '12px', color: '#64748B' }}>Your Role:</span>
+            <span 
+              style={{ 
+                fontSize: '12px', 
+                fontWeight: 'bold', 
+                backgroundColor: '#1E293B', 
+                color: '#FFF', 
+                padding: '3px 10px', 
+                borderRadius: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <span>{ROLE_LABELS[currentViewRole] || currentViewRole}</span>
+              {isInstructor && activeTab === 'participant' && (
+                <span style={{ fontSize: '10px', backgroundColor: '#D97706', padding: '1px 5px', borderRadius: '3px' }}>
+                  PREVIEW
+                </span>
+              )}
+            </span>
+          </div>
+
+          {/* Instructor Trainee Preview Dropdown */}
+          {isInstructor && activeTab === 'participant' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', color: '#64748B' }}>Preview Role:</span>
+              <select 
+                value={previewRole} 
+                onChange={(e) => setPreviewRole(e.target.value)}
+                style={{ padding: '3px 8px', fontSize: '12px', border: '1px solid #CBD5E1', borderRadius: '4px', fontWeight: 'bold' }}
+              >
+                <option value={TRAINEE_ROLES.TEAM_LEADER}>Team Leader</option>
+                <option value={TRAINEE_ROLES.LAND_MEMBER}>Land Member</option>
+                <option value={TRAINEE_ROLES.AIR_MEMBER}>Air Member</option>
+                <option value={TRAINEE_ROLES.CYBER_EW_MEMBER}>Cyber/EW Member</option>
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* Dynamic Communication Link Status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#B45309', fontWeight: 'bold', background: '#FEF3C7', padding: '4px 10px', borderRadius: '12px', border: '1px solid #FCD34D' }}>
+            <Wifi size={14} style={{ color: '#D97706' }} />
+            <span>Connection: Unstable (Delays & Dropped Messages Possible)</span>
+          </div>
+
+          <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Activity size={14} style={{ color: '#2563EB' }} />
+            <span>Messages Received: <strong>{participantMessages.length}</strong></span>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. MAIN WORKSPACE VIEW */}
       {activeTab === 'participant' ? (
-        /* PARTICIPANT VIEW */
-        <div style={{ padding: '24px', flexGrow: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-          {/* Left Panel: Delivered Dispatches Stream */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Scenario Briefing */}
-            <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '18px', borderTop: '3px solid var(--color-primary-navy)' }}>
-              <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '6px' }}>
-                Fictional Scenario Briefing
-              </h3>
-              <p style={{ fontSize: '13px', color: 'var(--color-text-primary)', lineHeight: '1.5', marginBottom: '10px' }}>
-                {scenario?.shortDesc}
-              </p>
-              <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', padding: '8px 10px', fontSize: '12px' }}>
-                <strong>Objective:</strong> {scenario?.objective}
+        /* ========================================================================= */
+        /* TRAINEE EXERCISE SCREEN (Clean & Simple: Feed, Chat, Decision)             */
+        /* ========================================================================= */
+        <div style={{ padding: '20px 24px', flexGrow: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          
+          {/* Left Panel: Received Messages Feed */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            
+            {/* Mission Goal Box */}
+            <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '14px 18px', borderLeft: '4px solid #2563EB' }}>
+              <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#2563EB', textTransform: 'uppercase', marginBottom: '2px' }}>
+                Mission Goal
               </div>
+              <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '4px' }}>
+                {scenario?.title}
+              </div>
+              <p style={{ fontSize: '12px', color: '#475569', lineHeight: '1.5', margin: 0 }}>
+                {scenario?.objective || scenario?.shortDesc}
+              </p>
             </div>
 
-            {/* Delivered Messages Stream */}
-            <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '18px', flexGrow: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #E2E8F0', paddingBottom: '8px' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-                  Delivered Intelligence Dispatches ({participantMessages.length})
-                </h3>
-                <span style={{ fontSize: '11px', color: '#15803D', fontWeight: 'bold', background: '#DCFCE7', padding: '2px 6px' }}>
-                  ROLE FEED: {userRole.toUpperCase()}
+            {/* My Received Messages Feed */}
+            <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '18px', flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
+                <div>
+                  <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                    Incoming Messages ({participantMessages.length})
+                  </h3>
+                  <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                    Messages delivered to your role. Other roles may receive different reports.
+                  </div>
+                </div>
+
+                <span style={{ fontSize: '11px', background: '#F1F5F9', color: '#334155', padding: '3px 8px', fontWeight: 'bold', borderRadius: '4px' }}>
+                  {ROLE_LABELS[currentViewRole] || 'Trainee'} Inbox
                 </span>
               </div>
 
               {participantMessages.length === 0 ? (
-                <div style={{ padding: '32px', textAlign: 'center', color: '#64748B', fontSize: '13px', backgroundColor: '#F8FAFC', border: '1px dashed #CBD5E1' }}>
-                  No messages delivered yet. Waiting for scheduled telemetry transmissions... (Elapsed: T+ {engineState.elapsedFormatted})
+                <div style={{ padding: '36px 20px', textAlign: 'center', color: '#64748B', fontSize: '13px', backgroundColor: '#F8FAFC', border: '1px dashed #CBD5E1', borderRadius: '6px', margin: 'auto 0' }}>
+                  <Radio size={28} style={{ color: '#94A3B8', marginBottom: '8px' }} />
+                  <div style={{ fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '4px' }}>
+                    Waiting for incoming messages...
+                  </div>
+                  <div>
+                    No reports received yet at current time (T+ {engineState.elapsedFormatted}).
+                  </div>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {participantMessages.map((ev) => (
-                    <div 
-                      key={ev.id} 
-                      style={{
-                        backgroundColor: ev.deliveryBehavior === 'conflicting' ? '#FEF3C7' : ev.deliveryBehavior === 'incomplete' ? '#FFFBEB' : '#F8FAFC',
-                        border: '1px solid #CBD5E1',
-                        borderLeft: `4px solid ${ev.deliveryBehavior === 'conflicting' ? '#D97706' : 'var(--color-primary-navy)'}`,
-                        padding: '14px'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-                        <span>[{formatSecondsToMMSS(ev.actualDeliveryTimeSec)}] {ev.title}</span>
-                        <span style={{ fontSize: '10px', textTransform: 'uppercase', color: '#64748B', background: '#E2E8F0', padding: '1px 5px' }}>
-                          Target: {ev.recipientRole}
-                        </span>
-                      </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto' }}>
+                  {participantMessages.map((ev, index) => {
+                    const domainStyle = getDomainBadgeStyle(ev.domain);
+                    return (
+                      <div 
+                        key={ev.deliveredId || ev.id || index}
+                        style={{
+                          backgroundColor: ev.isConflicting ? '#FFFBEB' : (ev.isTruncated ? '#FEF2F2' : '#FFFFFF'),
+                          border: '1px solid #E2E8F0',
+                          borderLeft: `4px solid ${ev.isConflicting ? '#D97706' : (ev.isTruncated ? '#DC2626' : '#2563EB')}`,
+                          borderRadius: '4px',
+                          padding: '12px 14px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px'
+                        }}
+                      >
+                        {/* Header: Timestamp, Title & Domain */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontFamily: 'monospace', fontWeight: 'bold', fontSize: '12px', color: '#2563EB' }}>
+                              [{formatSecondsToMMSS(ev.actualDeliveryTimeSec || ev.scheduledTimeSec)}]
+                            </span>
+                            <span style={{ fontWeight: 'bold', fontSize: '14px', color: 'var(--color-primary-navy)' }}>
+                              {ev.title}
+                            </span>
+                          </div>
 
-                      <div style={{ fontSize: '13px', color: '#334155', marginTop: '6px', lineHeight: '1.5' }}>
-                        {ev.content}
-                      </div>
-
-                      {ev.deliveryBehavior === 'conflicting' && (
-                        <div style={{ marginTop: '8px', fontSize: '11px', color: '#B45309', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <AlertTriangle size={13} />
-                          <span>Note: This report presents conflicting data with earlier reconnaissance dispatches.</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '10px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '3px', ...domainStyle }}>
+                              {ev.domain || 'JOINT'}
+                            </span>
+                            <span style={{ fontSize: '10px', background: '#F1F5F9', color: '#475569', padding: '2px 6px', fontWeight: 'bold', borderRadius: '3px' }}>
+                              Confidence: {ev.confidence || '80%'}
+                            </span>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
+
+                        {/* Content text */}
+                        <div style={{ fontSize: '13px', color: '#334155', lineHeight: '1.5' }}>
+                          {ev.content}
+                        </div>
+
+                        {/* Simple plain-English warnings */}
+                        {ev.isConflicting && (
+                          <div style={{ marginTop: '2px', fontSize: '11px', color: '#B45309', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <AlertTriangle size={13} />
+                            <span>⚠️ Warning: This report contradicts another incoming update.</span>
+                          </div>
+                        )}
+
+                        {ev.isTruncated && (
+                          <div style={{ marginTop: '2px', fontSize: '11px', color: '#991B1B', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <ShieldAlert size={13} />
+                            <span>⚠️ Warning: Part of this message was cut off during transmission.</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
+
           </div>
 
-          {/* Right Panel: Team Coordination & Decision Console */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Real-time Team Coordination Panel */}
+          {/* Right Panel: Team Chat & Decision Console */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            
+            {/* Team Chat Panel */}
             <TeamCoordinationPanel 
               session={liveSession}
               currentUser={currentUser}
               onSendTeamMessage={handleSendTeamMessage}
             />
 
-            {/* Decision Form */}
-            <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid var(--color-terracotta)', padding: '20px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '4px' }}>
-                Decision & Command Rationale Console
-              </h3>
-              <p style={{ fontSize: '12px', color: '#64748B', marginBottom: '14px' }}>
-                Record your tactical decision and explicit rationale based on delivered dispatches.
-              </p>
+            {/* Decision Submission Box */}
+            <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '18px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <div>
+                  <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                    Record Your Decision
+                  </h3>
+                  <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                    Document what action you decide to take based on the information you have.
+                  </div>
+                </div>
+              </div>
 
               <form onSubmit={handleDecisionSubmit}>
-                <div className="gov-form-group">
-                  <label className="gov-form-label">Command Decision Title</label>
+                <div className="gov-form-group" style={{ marginBottom: '10px' }}>
+                  <label className="gov-form-label" style={{ fontSize: '12px' }}>What action are you taking?</label>
                   <input 
                     type="text"
                     className="gov-form-input"
-                    placeholder="e.g. Issue Hold Order pending timestamp verification"
+                    placeholder="e.g. Hold patrol at Sector Alpha until radar confirms route"
                     value={decisionTitle}
                     onChange={(e) => setDecisionTitle(e.target.value)}
                     required
+                    style={{ fontSize: '13px' }}
                   />
                 </div>
 
-                <div className="gov-form-group">
-                  <label className="gov-form-label">Tactical Rationale & Assumptions</label>
+                <div className="gov-form-group" style={{ marginBottom: '10px' }}>
+                  <label className="gov-form-label" style={{ fontSize: '12px' }}>Why? (Reason / Explanation)</label>
                   <textarea 
                     className="gov-form-input"
-                    rows={3}
-                    placeholder="Explain why this decision was chosen under current signal conditions..."
+                    rows={2}
+                    placeholder="e.g. Air member reported radar gap, so we cannot advance without verification..."
                     value={rationale}
                     onChange={(e) => setRationale(e.target.value)}
                     required
+                    style={{ fontSize: '13px' }}
                   />
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <div>
-                    <label className="gov-form-label" style={{ marginBottom: 0 }}>Confidence Level</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <label className="gov-form-label" style={{ marginBottom: 0, fontSize: '12px' }}>Confidence:</label>
                     <select 
                       className="gov-form-select"
                       value={confidence}
                       onChange={(e) => setConfidence(e.target.value)}
-                      style={{ padding: '4px 8px', fontSize: '12px', marginTop: '2px' }}
+                      style={{ padding: '4px 8px', fontSize: '12px' }}
                     >
                       <option value="High">High Confidence</option>
                       <option value="Medium">Medium Confidence</option>
-                      <option value="Low">Low Confidence (High Friction)</option>
+                      <option value="Low">Low Confidence (High Uncertainty)</option>
                     </select>
                   </div>
 
-                  <button type="submit" className="gov-btn gov-btn-primary" style={{ padding: '10px 20px' }}>
-                    <Send size={15} />
-                    <span>Log Decision</span>
+                  <button 
+                    type="submit" 
+                    style={{
+                      backgroundColor: 'var(--color-primary-navy)',
+                      color: '#FFF',
+                      border: 'none',
+                      padding: '8px 16px',
+                      fontSize: '13px',
+                      fontWeight: 'bold',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <Send size={13} />
+                    <span>Submit Decision</span>
                   </button>
                 </div>
               </form>
             </div>
 
-            {/* Submitted Decisions Audit Log */}
-            <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '20px', flexGrow: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #E2E8F0', paddingBottom: '8px' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-                  Logged Decisions History ({decisions.length})
-                </h3>
-                <span style={{ fontSize: '11px', color: '#64748B' }}>Audit Log Active</span>
+            {/* Past Decisions Recorded List */}
+            <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '16px', flexGrow: 1 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #E2E8F0', paddingBottom: '6px' }}>
+                <h4 style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                  Decisions Logged ({decisions.length})
+                </h4>
+                <span style={{ fontSize: '11px', color: '#64748B' }}>Real-time Audit Log</span>
               </div>
 
               {decisions.length === 0 ? (
-                <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
-                  No decisions recorded yet.
+                <div style={{ padding: '14px', textAlign: 'center', color: '#94A3B8', fontSize: '12px' }}>
+                  No decisions logged yet. Use the form above when ready.
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
                   {decisions.map((d, index) => (
-                    <div key={d.id || index} style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', padding: '12px' }}>
+                    <div key={d.id || index} style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '8px 10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
                         <span>#{index + 1}: {d.title}</span>
-                        <span style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: 'bold' }}>
+                        <span style={{ fontSize: '11px', color: '#2563EB', fontWeight: 'bold' }}>
                           T+ {d.elapsedTimeFormatted || `${d.elapsedMinutes || 0}m`}
                         </span>
                       </div>
-                      <div style={{ fontSize: '12px', color: '#334155', marginTop: '4px', lineHeight: '1.4' }}>
+                      <div style={{ fontSize: '12px', color: '#475569', marginTop: '2px', lineHeight: '1.4' }}>
                         {d.rationale}
                       </div>
                       <div style={{ fontSize: '10px', color: '#64748B', marginTop: '4px', display: 'flex', justifyContent: 'space-between' }}>
-                        <span>By: {d.submittedBy || 'Operator'} ({d.submittedRole || 'Commander'})</span>
+                        <span>By: {d.submittedBy} ({ROLE_LABELS[d.submittedRole] || d.submittedRole})</span>
                         <span>Confidence: {d.confidence}</span>
                       </div>
                     </div>
@@ -475,78 +711,286 @@ export const TrainingRoom = ({
                 </div>
               )}
             </div>
+
           </div>
+
         </div>
       ) : (
-        /* INSTRUCTOR CONTROL TAB */
+        /* ========================================================================= */
+        /* INSTRUCTOR LIVE VIEW — INFORMATION ASYMMETRY DELIVERY MATRIX              */
+        /* ========================================================================= */
         <div style={{ padding: '24px', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '20px', borderTop: '3px solid var(--color-terracotta)' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '6px' }}>
-              Instructor Ground-Truth Audit Log & Delivery Status
-            </h3>
-            <p style={{ fontSize: '13px', color: '#64748B', marginBottom: '16px' }}>
-              Displays full scenario schedule including delayed countdowns and dropped messages (hidden from participants).
-            </p>
+          
+          {/* Plain English Instructor Orientation Card */}
+          <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', borderLeft: '4px solid #2563EB', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+            <div>
+              <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#2563EB', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                INSTRUCTOR LIVE OMNISCIENT VIEW
+              </div>
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '2px 0 4px' }}>
+                Live Message Delivery Matrix
+              </h2>
+              <p style={{ fontSize: '13px', color: '#64748B', margin: 0, maxWidth: '750px' }}>
+                This table shows what actually happened (Truth) on the left, and what each trainee received on the right. Click any row to expand and inspect the exact message seen by each role.
+              </p>
+            </div>
 
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-              <thead>
-                <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1', textAlign: 'left' }}>
-                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Sched. Time</th>
-                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Event Title</th>
-                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Behavior</th>
-                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Target</th>
-                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Actual Delivery</th>
-                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Engine Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {instructorLog.map((ev) => (
-                  <tr key={ev.id} style={{ borderBottom: '1px solid #E2E8F0' }}>
-                    <td style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-                      T+ {ev.scheduledTimeFormatted}
-                    </td>
-                    <td style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-text-primary)' }}>
-                      {ev.title}
-                    </td>
-                    <td style={{ padding: '10px 12px', textTransform: 'uppercase', fontSize: '11px', fontWeight: 'bold' }}>
-                      {ev.deliveryBehavior}
-                    </td>
-                    <td style={{ padding: '10px 12px', color: '#475569' }}>
-                      {ev.recipientRole}
-                    </td>
-                    <td style={{ padding: '10px 12px', color: '#64748B' }}>
-                      T+ {ev.actualDeliveryTimeFormatted}
-                    </td>
-                    <td style={{ padding: '10px 12px' }}>
-                      <span 
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: 'bold',
-                          padding: '2px 8px',
-                          borderRadius: '2px',
-                          backgroundColor: ev.status === DELIVERY_STATUS.DELIVERED ? '#DCFCE7' : ev.status === DELIVERY_STATUS.DROPPED ? '#FEE2E2' : '#FEF3C7',
-                          color: ev.status === DELIVERY_STATUS.DELIVERED ? '#15803D' : ev.status === DELIVERY_STATUS.DROPPED ? '#991B1B' : '#B45309'
-                        }}
-                      >
-                        {ev.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {/* Clean Legend */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontSize: '11px' }}>
+              <span style={{ ...getStatusBadgeStyle('delivered'), padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold' }}>Delivered</span>
+              <span style={{ ...getStatusBadgeStyle('delayed'), padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold' }}>Delayed</span>
+              <span style={{ ...getStatusBadgeStyle('partial'), padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold' }}>Incomplete</span>
+              <span style={{ ...getStatusBadgeStyle('conflicting'), padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold' }}>Conflicting</span>
+              <span style={{ ...getStatusBadgeStyle('dropped'), padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold' }}>Dropped (Lost)</span>
+            </div>
           </div>
+
+          {/* THE INFORMATION ASYMMETRY TABLE */}
+          <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', overflow: 'hidden' }}>
+            <div style={{ padding: '12px 20px', borderBottom: '1px solid #E2E8F0', backgroundColor: '#F8FAFC', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                Event Delivery Status Table
+              </h3>
+              <span style={{ fontSize: '12px', color: '#64748B' }}>
+                Timer: <strong>T+ {engineState.elapsedFormatted}</strong> • {asymmetryMatrix.length} Events Total
+              </span>
+            </div>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#F1F5F9', borderBottom: '2px solid #CBD5E1', textAlign: 'left' }}>
+                    <th style={{ padding: '12px 16px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Event Name</th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Domain</th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Time</th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Team Leader</th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Land Member</th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Air Member</th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Cyber/EW</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {asymmetryMatrix.map((row) => {
+                    const domainStyle = getDomainBadgeStyle(row.domain);
+                    const isExpanded = expandedEventId === row.eventId;
+
+                    const leaderStatus = row.roleStatuses.team_leader;
+                    const landStatus = row.roleStatuses.land_member;
+                    const airStatus = row.roleStatuses.air_member;
+                    const cyberStatus = row.roleStatuses.cyber_ew_member;
+
+                    return (
+                      <React.Fragment key={row.eventId}>
+                        <tr 
+                          onClick={() => setExpandedEventId(isExpanded ? null : row.eventId)}
+                          style={{ 
+                            borderBottom: '1px solid #E2E8F0',
+                            backgroundColor: isExpanded ? '#EFF6FF' : '#FFFFFF',
+                            cursor: 'pointer',
+                            transition: 'background-color 0.1s ease'
+                          }}
+                        >
+                          <td style={{ padding: '12px 16px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              {isExpanded ? <ChevronDown size={14} color="#2563EB" /> : <ChevronRight size={14} color="#64748B" />}
+                              <span>{row.title}</span>
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '12px' }}>
+                            <span style={{ fontSize: '10px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '3px', ...domainStyle }}>
+                              {row.domain}
+                            </span>
+                          </td>
+
+                          <td style={{ padding: '12px', fontFamily: 'monospace', color: '#64748B' }}>
+                            {row.scheduledTimeFormatted}
+                          </td>
+
+                          {/* Leader */}
+                          <td style={{ padding: '12px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', ...getStatusBadgeStyle(leaderStatus?.statusKey) }}>
+                              {leaderStatus?.statusText || 'Pending'}
+                            </span>
+                          </td>
+
+                          {/* Land */}
+                          <td style={{ padding: '12px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', ...getStatusBadgeStyle(landStatus?.statusKey) }}>
+                              {landStatus?.statusText || 'Pending'}
+                            </span>
+                          </td>
+
+                          {/* Air */}
+                          <td style={{ padding: '12px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', ...getStatusBadgeStyle(airStatus?.statusKey) }}>
+                              {airStatus?.statusText || 'Pending'}
+                            </span>
+                          </td>
+
+                          {/* Cyber/EW */}
+                          <td style={{ padding: '12px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', ...getStatusBadgeStyle(cyberStatus?.statusKey) }}>
+                              {cyberStatus?.statusText || 'Pending'}
+                            </span>
+                          </td>
+                        </tr>
+
+                        {/* Expandable Comparison Row */}
+                        {isExpanded && (
+                          <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1' }}>
+                            <td colSpan={7} style={{ padding: '16px 20px' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                
+                                {/* Actual Truth Card */}
+                                <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '4px', padding: '12px 14px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                    <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#1E40AF', textTransform: 'uppercase' }}>
+                                      Ground Truth (What Actually Happened)
+                                    </span>
+                                    <span style={{ fontSize: '11px', color: '#1E40AF', fontWeight: 'bold' }}>
+                                      True Confidence: {row.groundTruthConfidence}
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: '13px', color: '#1E3A8A' }}>
+                                    {row.groundTruthContent}
+                                  </div>
+                                </div>
+
+                                {/* Participant Variations Comparison Grid */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+                                  
+                                  {/* Team Leader */}
+                                  <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '10px 12px' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '4px' }}>
+                                      Team Leader saw:
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: '#334155', minHeight: '40px', lineHeight: '1.4' }}>
+                                      {leaderStatus?.isDelivered ? leaderStatus.deliveredContent : <em style={{ color: '#94A3B8' }}>Pending / delayed delivery</em>}
+                                    </div>
+                                    <div style={{ fontSize: '10px', color: '#64748B', marginTop: '6px' }}>
+                                      Status: <strong>{leaderStatus?.statusText}</strong>
+                                    </div>
+                                  </div>
+
+                                  {/* Land Member */}
+                                  <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '10px 12px' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '4px' }}>
+                                      Land Member saw:
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: '#334155', minHeight: '40px', lineHeight: '1.4' }}>
+                                      {landStatus?.isDelivered ? landStatus.deliveredContent : <em style={{ color: '#94A3B8' }}>Pending / delayed delivery</em>}
+                                    </div>
+                                    <div style={{ fontSize: '10px', color: '#64748B', marginTop: '6px' }}>
+                                      Status: <strong>{landStatus?.statusText}</strong>
+                                    </div>
+                                  </div>
+
+                                  {/* Air Member */}
+                                  <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '10px 12px' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '4px' }}>
+                                      Air Member saw:
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: '#334155', minHeight: '40px', lineHeight: '1.4' }}>
+                                      {airStatus?.isDelivered ? airStatus.deliveredContent : <em style={{ color: '#94A3B8' }}>Pending / delayed delivery</em>}
+                                    </div>
+                                    <div style={{ fontSize: '10px', color: '#64748B', marginTop: '6px' }}>
+                                      Status: <strong>{airStatus?.statusText}</strong>
+                                    </div>
+                                  </div>
+
+                                  {/* Cyber/EW */}
+                                  <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '10px 12px' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '4px' }}>
+                                      Cyber/EW saw:
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: '#334155', minHeight: '40px', lineHeight: '1.4' }}>
+                                      {cyberStatus?.behavior === 'dropped' ? (
+                                        <span style={{ color: '#DC2626', fontWeight: 'bold' }}>[Message Dropped / Lost]</span>
+                                      ) : cyberStatus?.isDelivered ? (
+                                        cyberStatus.deliveredContent
+                                      ) : (
+                                        <em style={{ color: '#94A3B8' }}>Pending / delayed delivery</em>
+                                      )}
+                                    </div>
+                                    <div style={{ fontSize: '10px', color: '#64748B', marginTop: '6px' }}>
+                                      Status: <strong>{cyberStatus?.statusText}</strong>
+                                    </div>
+                                  </div>
+
+                                </div>
+
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Participant Submitted Decisions Audit List */}
+          <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '20px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '12px' }}>
+              Live Trainee Decisions Submitted ({decisions.length})
+            </h3>
+
+            {decisions.length === 0 ? (
+              <div style={{ padding: '20px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
+                No participant decisions recorded yet in this exercise.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #E2E8F0', textAlign: 'left' }}>
+                    <th style={{ padding: '10px 12px' }}>Time</th>
+                    <th style={{ padding: '10px 12px' }}>Decision Action</th>
+                    <th style={{ padding: '10px 12px' }}>Reason / Explanation</th>
+                    <th style={{ padding: '10px 12px' }}>Trainee Role</th>
+                    <th style={{ padding: '10px 12px' }}>Confidence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {decisions.map((d, i) => (
+                    <tr key={d.id || i} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                      <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 'bold', color: '#2563EB' }}>
+                        T+ {d.elapsedTimeFormatted || `${d.elapsedMinutes || 0}m`}
+                      </td>
+                      <td style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                        {d.title}
+                      </td>
+                      <td style={{ padding: '10px 12px', color: '#334155' }}>
+                        {d.rationale}
+                      </td>
+                      <td style={{ padding: '10px 12px', color: '#64748B' }}>
+                        {d.submittedBy} ({ROLE_LABELS[d.submittedRole] || d.submittedRole})
+                      </td>
+                      <td style={{ padding: '10px 12px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '2px 6px', borderRadius: '3px', backgroundColor: d.confidence === 'High' ? '#DCFCE7' : d.confidence === 'Low' ? '#FEE2E2' : '#FEF3C7', color: d.confidence === 'High' ? '#15803D' : d.confidence === 'Low' ? '#991B1B' : '#B45309' }}>
+                          {d.confidence}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
         </div>
       )}
 
-      {/* Confirmation Modal to End Exercise */}
+      {/* 4. FINISH EXERCISE MODAL */}
       {showEndModal && (
         <div className="gov-modal-overlay" onClick={() => setShowEndModal(false)}>
-          <div className="gov-modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+          <div className="gov-modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '460px' }}>
             <div className="gov-modal-header" style={{ backgroundColor: '#DC2626', color: '#FFF' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 'bold' }}>
-                <AlertTriangle size={18} />
-                <span>Confirm End Exercise</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Square size={16} />
+                <span style={{ fontWeight: 'bold' }}>Finish Exercise Session</span>
               </div>
               <button className="gov-modal-close" onClick={() => setShowEndModal(false)} style={{ color: '#FFF' }}>
                 <X size={18} />
@@ -554,13 +998,14 @@ export const TrainingRoom = ({
             </div>
 
             <div className="gov-modal-body">
-              <p style={{ fontSize: '14px', color: 'var(--color-text-primary)', marginBottom: '16px' }}>
-                Are you sure you want to end this exercise session?
+              <p style={{ fontSize: '13px', color: '#334155', lineHeight: '1.5' }}>
+                Are you ready to conclude this exercise? Clock will stop at <strong>T+ {engineState.elapsedFormatted}</strong> and generate an After-Action Debrief (AAR).
               </p>
-              <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', padding: '10px', fontSize: '12px', color: '#475569', marginBottom: '20px' }}>
-                Total Decisions Recorded: <strong>{decisions.length}</strong><br />
-                Elapsed Duration: <strong>{engineState.elapsedFormatted}</strong><br />
-                Delivered Dispatches: <strong>{engineState.deliveredCount}</strong> | Dropped: <strong>{engineState.droppedCount}</strong>
+
+              <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '12px', fontSize: '12px', margin: '14px 0' }}>
+                <div>• Decisions Recorded: <strong>{decisions.length}</strong></div>
+                <div>• Time Elapsed: <strong>{engineState.elapsedFormatted}</strong></div>
+                <div>• Connected Participants: <strong>{liveSession?.participants?.length || 1}</strong></div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
@@ -572,20 +1017,24 @@ export const TrainingRoom = ({
                   style={{ backgroundColor: '#DC2626', color: '#FFF' }}
                   onClick={() => {
                     setShowEndModal(false);
-                    if (session?.sessionCode) {
-                      multiplayerEngine.endExercise(session.sessionCode);
-                    }
-                    const currentLog = engineRef.current ? engineRef.current.getInstructorLog() : [];
-                    onEndExercise(session, decisions, Math.floor(engineState.elapsedSeconds / 60), currentLog);
+                    onEndExercise(
+                      liveSession || session, 
+                      decisions, 
+                      Math.ceil(engineState.elapsedSeconds / 60), 
+                      groundTruthEvents,
+                      asymmetryMatrix,
+                      liveSession?.teamMessages || session?.teamMessages || []
+                    );
                   }}
                 >
-                  Confirm & End Session
+                  Finish & View Debrief
                 </button>
               </div>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 };

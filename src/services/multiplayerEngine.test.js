@@ -11,8 +11,8 @@ const mockScenario = {
   ]
 };
 
-test('MultiplayerEngine - Create Session & Generate Join Code', () => {
-  const session = multiplayerEngine.createSession({
+test('MultiplayerEngine - Create Session & Generate Join Code', async () => {
+  const session = await multiplayerEngine.createSession({
     scenario: mockScenario,
     sessionName: 'Alpha Squad Joint Operation',
     maxParticipants: 4,
@@ -25,8 +25,8 @@ test('MultiplayerEngine - Create Session & Generate Join Code', () => {
   assert.strictEqual(session.participants.length, 1, 'Initial host participant included');
 });
 
-test('MultiplayerEngine - Participant Join & Status Update', () => {
-  const session = multiplayerEngine.createSession({
+test('MultiplayerEngine - Participant Join & Status Update', async () => {
+  const session = await multiplayerEngine.createSession({
     scenario: mockScenario,
     sessionName: 'Beta Squad Operation',
     maxParticipants: 4,
@@ -34,7 +34,7 @@ test('MultiplayerEngine - Participant Join & Status Update', () => {
     creatorRole: 'instructor'
   });
 
-  const joinedSession = multiplayerEngine.joinSession(session.sessionCode, {
+  const joinedSession = await multiplayerEngine.joinSession(session.sessionCode, {
     serviceId: 'OPS-PARTICIPANT-02',
     displayName: 'Commander Bravo',
     role: 'commander'
@@ -44,8 +44,8 @@ test('MultiplayerEngine - Participant Join & Status Update', () => {
   assert.strictEqual(joinedSession.status, 'Ready', 'Session status set to Ready when participant count >= 2');
 });
 
-test('MultiplayerEngine - Send Team Message', () => {
-  const session = multiplayerEngine.createSession({
+test('MultiplayerEngine - Send Team Message', async () => {
+  const session = await multiplayerEngine.createSession({
     scenario: mockScenario,
     sessionName: 'Gamma Exercise',
     maxParticipants: 4,
@@ -66,8 +66,8 @@ test('MultiplayerEngine - Send Team Message', () => {
   assert.strictEqual(reloaded.teamMessages[0].text, 'Acknowledged command dispatch. Moving to sector.');
 });
 
-test('MultiplayerEngine - Decision Submission Sync', () => {
-  const session = multiplayerEngine.createSession({
+test('MultiplayerEngine - Decision Submission Sync', async () => {
+  const session = await multiplayerEngine.createSession({
     scenario: mockScenario,
     sessionName: 'Delta Exercise',
     maxParticipants: 4,
@@ -89,8 +89,8 @@ test('MultiplayerEngine - Decision Submission Sync', () => {
   assert.strictEqual(reloaded.decisions[0].title, 'Hold Position at Sector Alpha');
 });
 
-test('MultiplayerEngine - Start & End Exercise Transitions', () => {
-  const session = multiplayerEngine.createSession({
+test('MultiplayerEngine - Start & End Exercise Transitions', async () => {
+  const session = await multiplayerEngine.createSession({
     scenario: mockScenario,
     sessionName: 'Epsilon Exercise',
     maxParticipants: 4,

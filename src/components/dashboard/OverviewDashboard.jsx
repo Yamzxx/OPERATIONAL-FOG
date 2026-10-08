@@ -1,233 +1,517 @@
 import React from 'react';
 import { 
-  BookOpen, 
-  PlusCircle, 
-  PlayCircle, 
-  FileCheck, 
+  Play, 
+  ArrowRight, 
+  Clock, 
   Users, 
   LogIn, 
-  ArrowRight,
-  ShieldCheck
+  FileCheck, 
+  HelpCircle, 
+  BookOpen,
+  Radio,
+  Layers,
+  CheckCircle,
+  AlertCircle
 } from 'lucide-react';
+import { ROLE_LABELS, normalizeRole } from '../../services/eventEngine';
 
 export const OverviewDashboard = ({ 
-  scenarios, 
-  sessions, 
-  aars, 
+  scenarios = [], 
+  sessions = [], 
+  currentUser,
+  activeTrainingSession,
   onNavigate,
+  onStartScenario,
   onOpenCreateScenario,
   onOpenCreateMultiplayer,
   onOpenJoinSession
 }) => {
-  const activeSessions = sessions.filter(s => s.status === 'In Progress' || s.status === 'Waiting');
-  const completedSessions = sessions.filter(s => s.status === 'Completed');
+  const userRole = normalizeRole(currentUser?.role || 'team_leader');
+  const roleLabel = ROLE_LABELS[userRole] || 'Team Leader';
+
+  // Identify SIH Flagship Demo Scenario
+  const sihScenario = scenarios.find(s => s.code === 'SCEN-SIH-2026' || s.id === 'scen-sih-2026') || scenarios[0];
+
+  const handleLaunchSIH = () => {
+    if (sihScenario && onStartScenario) {
+      onStartScenario(sihScenario);
+    } else {
+      onNavigate('scenarios');
+    }
+  };
 
   return (
-    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '28px' }}>
-      {/* Header Banner */}
+    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      
+      {/* 1. ACTIVE EXERCISE BANNER (if running) */}
+      {activeTrainingSession && (
+        <div 
+          style={{
+            backgroundColor: '#EFF6FF',
+            border: '1px solid #BFDBFE',
+            borderLeft: '4px solid #2563EB',
+            borderRadius: '4px',
+            padding: '14px 20px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#2563EB', animation: 'pulse 1.5s infinite' }} />
+            <div>
+              <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#1D4ED8', textTransform: 'uppercase' }}>
+                Exercise In Progress
+              </div>
+              <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#1E3A8A' }}>
+                {activeTrainingSession.name || 'Live Training Exercise'}
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => onNavigate('training-room')}
+            style={{
+              backgroundColor: '#2563EB',
+              color: '#FFFFFF',
+              border: 'none',
+              padding: '8px 16px',
+              fontSize: '13px',
+              fontWeight: 'bold',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span>Resume Exercise</span>
+            <ArrowRight size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* 2. WELCOME HEADER (CALM & INFORMATIVE) */}
       <div 
         style={{
           backgroundColor: '#FFFFFF',
-          border: '1px solid #CBD5E1',
-          borderLeft: '4px solid var(--color-primary-navy)',
-          padding: '24px',
-          boxShadow: 'var(--shadow-sm)'
+          border: '1px solid #E2E8F0',
+          borderRadius: '6px',
+          padding: '24px 28px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '16px'
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <span style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-              AUTHENTICATED WORKSPACE CONSOLE
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+            <span style={{ fontSize: '12px', background: '#F1F5F9', color: '#334155', padding: '3px 8px', fontWeight: 'bold', borderRadius: '4px' }}>
+              Your Role: <strong>{roleLabel}</strong>
             </span>
-            <h1 style={{ fontFamily: 'var(--font-family-serif)', fontSize: '26px', fontWeight: '800', color: 'var(--color-primary-navy)', margin: '4px 0 6px' }}>
-              Training Overview & Multiplayer Hub
-            </h1>
-            <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', maxWidth: '780px' }}>
-              Manage multi-participant exercises, coordinate team dispatches, and review decisions under communication uncertainty.
+            <span style={{ fontSize: '12px', color: '#64748B' }}>
+              User ID: {currentUser?.serviceId || 'Trainee-01'}
+            </span>
+          </div>
+          <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '4px 0 6px' }}>
+            Operational Fog Simulator
+          </h1>
+          <p style={{ fontSize: '14px', color: '#475569', maxWidth: '680px', margin: 0, lineHeight: '1.5' }}>
+            In high-stress operations, communication lines fail. Practice making team decisions when radio reports are <strong>delayed</strong>, <strong>missing</strong>, <strong>incomplete</strong>, or <strong>conflicting</strong>.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '12px', background: '#DCFCE7', color: '#15803D', padding: '6px 12px', fontWeight: 'bold', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#16A34A' }} />
+            Simulator Ready
+          </span>
+        </div>
+      </div>
+
+      {/* 3. HERO DEMO LAUNCH CARD (ONE-CLICK LAUNCH) */}
+      <div 
+        style={{
+          backgroundColor: '#0F172A',
+          color: '#FFFFFF',
+          borderRadius: '8px',
+          padding: '28px',
+          boxShadow: '0 4px 12px rgba(15, 23, 42, 0.15)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '24px'
+        }}
+      >
+        <div style={{ flex: '1 1 500px' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: '#D97706', color: '#FFF', fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', marginBottom: '10px' }}>
+            ★ SIH DEMONSTRATION EXERCISE
+          </div>
+
+          <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#FFFFFF', marginBottom: '8px' }}>
+            Multi-Domain Information Asymmetry Exercise
+          </h2>
+
+          <p style={{ fontSize: '13px', color: '#CBD5E1', lineHeight: '1.6', marginBottom: '16px', maxWidth: '620px' }}>
+            A 5-minute simulated operation. One single event is delivered differently to each role: the <strong>Team Leader</strong> gets it with a 20-second delay, the <strong>Land Member</strong> gets it right away, the <strong>Air Member</strong> gets an incomplete radar report, and the <strong>Cyber/EW Member</strong> has their message dropped entirely.
+          </p>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', fontSize: '12px', color: '#94A3B8' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Clock size={14} style={{ color: '#FBBF24' }} />
+              Fast 5-Minute Run
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Users size={14} style={{ color: '#38BDF8' }} />
+              4 Trainee Roles + Instructor
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Layers size={14} style={{ color: '#A78BFA' }} />
+              Live Delivery Comparison
+            </span>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '220px' }}>
+          <button
+            onClick={handleLaunchSIH}
+            style={{
+              backgroundColor: '#F59E0B',
+              color: '#0F172A',
+              border: 'none',
+              padding: '14px 24px',
+              fontSize: '15px',
+              fontWeight: 'bold',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 10px rgba(245, 158, 11, 0.3)',
+              transition: 'transform 0.1s ease'
+            }}
+          >
+            <Play size={18} fill="#0F172A" />
+            <span>Start Demo Exercise</span>
+          </button>
+          <div style={{ fontSize: '11px', color: '#94A3B8', textAlign: 'center' }}>
+            Ready to play • No setup required
+          </div>
+        </div>
+      </div>
+
+      {/* 4. EXPLANATION: THE 4 TYPES OF COMMUNICATION BREAKDOWNS (CLEAR & SIMPLE) */}
+      <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '20px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+          <HelpCircle size={18} style={{ color: '#2563EB' }} />
+          <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+            What Happens During an Exercise? (The 4 Message Problems)
+          </h3>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px' }}>
+          {/* Delayed */}
+          <div style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: '4px', padding: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#92400E', fontWeight: 'bold', fontSize: '13px', marginBottom: '4px' }}>
+              <span>⏳</span>
+              <span>1. Delayed Message</span>
+            </div>
+            <p style={{ fontSize: '12px', color: '#78350F', lineHeight: '1.4', margin: 0 }}>
+              The report arrives 20 to 30 seconds late. Trainees have to decide whether to wait or act on old information.
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <span style={{ fontSize: '11px', background: '#DCFCE7', color: '#15803D', padding: '4px 10px', border: '1px solid #86EFAC', fontWeight: '700' }}>
-              SYSTEM ONLINE — POSTGRESQL CONNECTED
+          {/* Dropped / Lost */}
+          <div style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: '4px', padding: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#991B1B', fontWeight: 'bold', fontSize: '13px', marginBottom: '4px' }}>
+              <span>❌</span>
+              <span>2. Dropped (Lost)</span>
+            </div>
+            <p style={{ fontSize: '12px', color: '#7F1D1D', lineHeight: '1.4', margin: 0 }}>
+              The message is blocked by signal interference. The trainee never sees it and does not know it was sent.
+            </p>
+          </div>
+
+          {/* Incomplete */}
+          <div style={{ backgroundColor: '#F3E8FF', border: '1px solid #D8B4FE', borderRadius: '4px', padding: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#6B21A8', fontWeight: 'bold', fontSize: '13px', marginBottom: '4px' }}>
+              <span>✂️</span>
+              <span>3. Incomplete Report</span>
+            </div>
+            <p style={{ fontSize: '12px', color: '#581C87', lineHeight: '1.4', margin: 0 }}>
+              Part of the report is cut off (like grid coordinates or enemy strength), requiring squad cross-checks.
+            </p>
+          </div>
+
+          {/* Conflicting */}
+          <div style={{ backgroundColor: '#FFEDD5', border: '1px solid #FDBA74', borderRadius: '4px', padding: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#9A3412', fontWeight: 'bold', fontSize: '13px', marginBottom: '4px' }}>
+              <span>⚠️</span>
+              <span>4. Conflicting Intel</span>
+            </div>
+            <p style={{ fontSize: '12px', color: '#7C2D12', lineHeight: '1.4', margin: 0 }}>
+              Two team members receive opposite facts (e.g. "path is clear" vs "patrol halted"). They must verify before moving.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* 5. QUICK ACTIONS: TEAM ROOMS & SCENARIOS */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
+        
+        {/* Card 1: Multiplayer Room */}
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <Users size={18} style={{ color: '#2563EB' }} />
+              <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                Multiplayer Team Mode
+              </h3>
+            </div>
+            <p style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.5', margin: '0 0 16px' }}>
+              Open separate browser tabs or invite teammates to join the same exercise as Team Leader, Land, Air, or Cyber/EW.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={onOpenCreateMultiplayer}
+              style={{
+                flex: 1,
+                backgroundColor: 'var(--color-primary-navy)',
+                color: '#FFF',
+                border: 'none',
+                padding: '10px 14px',
+                fontSize: '13px',
+                fontWeight: 'bold',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px'
+              }}
+            >
+              <Users size={14} />
+              <span>Host Room</span>
+            </button>
+
+            <button
+              onClick={onOpenJoinSession}
+              style={{
+                flex: 1,
+                backgroundColor: '#FFFFFF',
+                color: 'var(--color-primary-navy)',
+                border: '1px solid #CBD5E1',
+                padding: '10px 14px',
+                fontSize: '13px',
+                fontWeight: 'bold',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px'
+              }}
+            >
+              <LogIn size={14} />
+              <span>Join with Code</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Card 2: Scenario Library */}
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <BookOpen size={18} style={{ color: '#D97706' }} />
+              <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                Scenario Library
+              </h3>
+            </div>
+            <p style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.5', margin: '0 0 16px' }}>
+              Choose from pre-built tactical scenarios or create your own custom exercise with custom delay curves.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={() => onNavigate('scenarios')}
+              style={{
+                flex: 1,
+                backgroundColor: '#FFFFFF',
+                color: 'var(--color-primary-navy)',
+                border: '1px solid #CBD5E1',
+                padding: '10px 14px',
+                fontSize: '13px',
+                fontWeight: 'bold',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px'
+              }}
+            >
+              <BookOpen size={14} />
+              <span>Browse All ({scenarios.length})</span>
+            </button>
+
+            <button
+              onClick={onOpenCreateScenario}
+              style={{
+                flex: 1,
+                backgroundColor: '#FFFFFF',
+                color: '#2563EB',
+                border: '1px solid #BFDBFE',
+                padding: '10px 14px',
+                fontSize: '13px',
+                fontWeight: 'bold',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px'
+              }}
+            >
+              <span>+ Create Scenario</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Card 3: After-Action Reports */}
+        <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <FileCheck size={18} style={{ color: '#16A34A' }} />
+              <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                After-Action Debrief (AAR)
+              </h3>
+            </div>
+            <p style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.5', margin: '0 0 16px' }}>
+              Review past training exercises. Compare what decisions trainees made against what was actually true, and export PDF reports.
+            </p>
+          </div>
+
+          <button
+            onClick={() => onNavigate('aar')}
+            style={{
+              width: '100%',
+              backgroundColor: '#FFFFFF',
+              color: 'var(--color-primary-navy)',
+              border: '1px solid #CBD5E1',
+              padding: '10px 14px',
+              fontSize: '13px',
+              fontWeight: 'bold',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px'
+            }}
+          >
+            <FileCheck size={14} />
+            <span>Open Debriefs</span>
+          </button>
+        </div>
+
+      </div>
+
+      {/* 6. RECENT EXERCISE ACTIVITY TABLE */}
+      <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '20px 24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
+          <div>
+            <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+              Recent Exercises
+            </h3>
+            <span style={{ fontSize: '12px', color: '#64748B' }}>
+              Past sessions and generated records
             </span>
           </div>
-        </div>
-      </div>
-
-      {/* Quick Actions Bar */}
-      <div>
-        <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '12px' }}>
-          Quick Actions & Multiplayer Controls
-        </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-          <button 
-            onClick={onOpenCreateMultiplayer}
-            className="gov-btn"
-            style={{ backgroundColor: 'var(--color-primary-navy)', color: '#FFFFFF', justifyContent: 'flex-start', padding: '14px 18px' }}
-          >
-            <Users size={18} style={{ color: 'var(--color-gold-accent)' }} />
-            <span>Create Multiplayer Session</span>
-          </button>
-
-          <button 
-            onClick={onOpenJoinSession}
-            className="gov-btn"
-            style={{ backgroundColor: '#FFFFFF', color: 'var(--color-primary-navy)', border: '1px solid #CBD5E1', justifyContent: 'flex-start', padding: '14px 18px' }}
-          >
-            <LogIn size={18} style={{ color: 'var(--color-terracotta)' }} />
-            <span>Join Session via Code</span>
-          </button>
-
-          <button 
-            onClick={onOpenCreateScenario}
-            className="gov-btn"
-            style={{ backgroundColor: '#FFFFFF', color: 'var(--color-primary-navy)', border: '1px solid #CBD5E1', justifyContent: 'flex-start', padding: '14px 18px' }}
-          >
-            <PlusCircle size={18} style={{ color: '#0284C7' }} />
-            <span>Create Scenario Draft</span>
-          </button>
-
-          <button 
-            onClick={() => onNavigate('aar')}
-            className="gov-btn"
-            style={{ backgroundColor: '#FFFFFF', color: 'var(--color-primary-navy)', border: '1px solid #CBD5E1', justifyContent: 'flex-start', padding: '14px 18px' }}
-          >
-            <FileCheck size={18} style={{ color: '#16A34A' }} />
-            <span>Review Completed AARs</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Training Summary Cards */}
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-            Training Metrics & Summary
-          </h3>
-          <span style={{ fontSize: '11px', color: '#15803D', fontWeight: '700' }}>
-            PostgreSQL Persistent Storage Active
-          </span>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-          {/* Card 1: Available Scenarios */}
-          <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid var(--color-primary-navy)', padding: '18px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748B' }}>AVAILABLE SCENARIOS</div>
-            <div style={{ fontSize: '28px', fontWeight: '800', color: 'var(--color-primary-navy)', margin: '4px 0' }}>
-              {scenarios.length}
-            </div>
-            <div style={{ fontSize: '11px', color: '#0369A1', fontWeight: '600' }}>Configured Scenarios</div>
-          </div>
-
-          {/* Card 2: Active Sessions */}
-          <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid #F59E0B', padding: '18px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748B' }}>ACTIVE EXERCISES</div>
-            <div style={{ fontSize: '28px', fontWeight: '800', color: '#B45309', margin: '4px 0' }}>
-              {activeSessions.length}
-            </div>
-            <div style={{ fontSize: '11px', color: '#B45309', fontWeight: '600' }}>In-Progress Workspaces</div>
-          </div>
-
-          {/* Card 3: Completed Exercises */}
-          <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid #16A34A', padding: '18px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748B' }}>COMPLETED EXERCISES</div>
-            <div style={{ fontSize: '28px', fontWeight: '800', color: '#15803D', margin: '4px 0' }}>
-              {completedSessions.length}
-            </div>
-            <div style={{ fontSize: '11px', color: '#15803D', fontWeight: '600' }}>Recorded Audit Logs</div>
-          </div>
-
-          {/* Card 4: Pending Reviews */}
-          <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid var(--color-terracotta)', padding: '18px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#64748B' }}>PENDING REVIEWS (AAR)</div>
-            <div style={{ fontSize: '28px', fontWeight: '800', color: 'var(--color-terracotta)', margin: '4px 0' }}>
-              {aars.length}
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: '600' }}>Ready for Debrief</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Recent Activity Table */}
-      <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-            Recent Exercise Activity
-          </h3>
+          
           <button 
             onClick={() => onNavigate('sessions')}
-            style={{ background: 'none', border: 'none', color: 'var(--color-terracotta)', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+            style={{ background: 'none', border: 'none', color: '#2563EB', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
           >
-            <span>View All Sessions</span>
+            <span>View All ({sessions.length})</span>
             <ArrowRight size={14} />
           </button>
         </div>
 
         {sessions.length === 0 ? (
-          <div style={{ padding: '32px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
-            No exercise activity records found. Create or join a multiplayer session to start.
+          <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
+            No exercises recorded yet. Click "Start Demo Exercise" above to begin your first run!
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1', textAlign: 'left' }}>
-                <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Exercise Name</th>
-                <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Join Code</th>
-                <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Status</th>
-                <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Date</th>
-                <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)', textAlign: 'right' }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sessions.slice(0, 5).map((sess) => (
-                <tr key={sess.id} style={{ borderBottom: '1px solid #E2E8F0' }}>
-                  <td style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-                    {sess.name}
-                    {sess.isSample && <span style={{ marginLeft: '6px', fontSize: '10px', background: '#E2E8F0', color: '#475569', padding: '1px 5px', fontWeight: 'bold' }}>PRE-SET</span>}
-                  </td>
-                  <td style={{ padding: '12px', fontFamily: 'monospace', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-                    {sess.sessionCode || 'SINGLE-NODE'}
-                  </td>
-                  <td style={{ padding: '12px' }}>
-                    <span 
-                      style={{
-                        fontSize: '11px',
-                        fontWeight: '700',
-                        padding: '2px 8px',
-                        borderRadius: '2px',
-                        backgroundColor: sess.status === 'Completed' ? '#DCFCE7' : sess.status === 'In Progress' ? '#FEF3C7' : '#E0F2FE',
-                        color: sess.status === 'Completed' ? '#15803D' : sess.status === 'In Progress' ? '#B45309' : '#0369A1'
-                      }}
-                    >
-                      {sess.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px', color: '#64748B' }}>
-                    {new Date(sess.createdAt).toLocaleDateString()}
-                  </td>
-                  <td style={{ padding: '12px', textAlign: 'right' }}>
-                    <button 
-                      onClick={() => onNavigate(sess.status === 'Completed' ? 'aar' : 'sessions')}
-                      style={{
-                        background: 'none',
-                        border: '1px solid #CBD5E1',
-                        padding: '4px 10px',
-                        fontSize: '11px',
-                        fontWeight: 'bold',
-                        color: 'var(--color-primary-navy)',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      {sess.status === 'Completed' ? 'View AAR' : 'Open Workspace'}
-                    </button>
-                  </td>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #E2E8F0', textAlign: 'left' }}>
+                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Exercise Name</th>
+                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Room Code</th>
+                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Status</th>
+                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Date</th>
+                  <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)', textAlign: 'right' }}>Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sessions.slice(0, 4).map((sess) => (
+                  <tr key={sess.id} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                    <td style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                      {sess.name}
+                    </td>
+                    <td style={{ padding: '12px', fontFamily: 'monospace', fontWeight: 'bold', color: '#2563EB' }}>
+                      {sess.sessionCode || 'SOLO'}
+                    </td>
+                    <td style={{ padding: '12px' }}>
+                      <span 
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          padding: '3px 8px',
+                          borderRadius: '12px',
+                          backgroundColor: sess.status === 'Completed' ? '#DCFCE7' : '#FEF3C7',
+                          color: sess.status === 'Completed' ? '#15803D' : '#B45309'
+                        }}
+                      >
+                        {sess.status === 'Completed' ? 'Finished' : sess.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px', color: '#64748B' }}>
+                      {new Date(sess.createdAt).toLocaleDateString()}
+                    </td>
+                    <td style={{ padding: '12px', textAlign: 'right' }}>
+                      <button 
+                        onClick={() => onNavigate(sess.status === 'Completed' ? 'aar' : 'sessions')}
+                        style={{
+                          background: 'none',
+                          border: '1px solid #CBD5E1',
+                          borderRadius: '4px',
+                          padding: '5px 12px',
+                          fontSize: '12px',
+                          fontWeight: 'bold',
+                          color: 'var(--color-primary-navy)',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {sess.status === 'Completed' ? 'View Debrief' : 'Open Session'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
+
     </div>
   );
 };

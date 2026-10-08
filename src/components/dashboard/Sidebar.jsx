@@ -9,8 +9,10 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  ShieldCheck
+  User,
+  Radio
 } from 'lucide-react';
+import { ROLE_LABELS, normalizeRole } from '../../services/eventEngine';
 
 export const Sidebar = ({ 
   activeView, 
@@ -18,20 +20,25 @@ export const Sidebar = ({
   userRole, 
   onSignOut, 
   collapsed, 
-  setCollapsed 
+  setCollapsed,
+  hasActiveTraining = false
 }) => {
+  const normalized = normalizeRole(userRole);
+  const friendlyRole = ROLE_LABELS[normalized] || 'Team Leader';
+
   const menuItems = [
-    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'scenarios', label: 'Scenario Library', icon: BookOpen },
+    { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
+    ...(hasActiveTraining ? [{ id: 'training-room', label: 'Live Exercise', icon: Radio, isLive: true }] : []),
+    { id: 'scenarios', label: 'Scenarios', icon: BookOpen },
     { id: 'sessions', label: 'Training Sessions', icon: PlayCircle },
-    { id: 'aar', label: 'After-Action Reviews', icon: FileCheck },
+    { id: 'aar', label: 'Debriefs & Reports', icon: FileCheck },
     { id: 'settings', label: 'Settings', icon: Settings }
   ];
 
   return (
     <aside 
       style={{
-        width: collapsed ? '72px' : '260px',
+        width: collapsed ? '72px' : '250px',
         backgroundColor: '#0F172A',
         color: '#E2E8F0',
         display: 'flex',
@@ -54,15 +61,15 @@ export const Sidebar = ({
           backgroundColor: '#0A0F1D'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', overflow: 'hidden' }}>
-          <NationalEmblem height={collapsed ? 36 : 42} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+          <NationalEmblem height={collapsed ? 32 : 38} />
           {!collapsed && (
             <div>
-              <div style={{ fontFamily: 'var(--font-family-serif)', fontWeight: '800', fontSize: '16px', color: '#FFF', letterSpacing: '0.5px' }}>
+              <div style={{ fontFamily: 'var(--font-family-serif)', fontWeight: '800', fontSize: '15px', color: '#FFF', letterSpacing: '0.5px' }}>
                 OPERATIONAL FOG
               </div>
-              <div style={{ fontSize: '10px', color: 'var(--color-gold-accent)', fontWeight: 'bold' }}>
-                TRAINING CONSOLE
+              <div style={{ fontSize: '10px', color: '#FBBF24', fontWeight: 'bold' }}>
+                TRAINING SIMULATOR
               </div>
             </div>
           )}
@@ -74,11 +81,12 @@ export const Sidebar = ({
             background: '#1E293B',
             border: 'none',
             color: '#94A3B8',
-            borderRadius: '2px',
+            borderRadius: '4px',
             padding: '4px',
             display: collapsed ? 'none' : 'flex',
             alignItems: 'center',
-            justifyContent: 'center'
+            justifyContent: 'center',
+            cursor: 'pointer'
           }}
           title={collapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
         >
@@ -86,33 +94,33 @@ export const Sidebar = ({
         </button>
       </div>
 
-      {/* Demo Environment Badge */}
+      {/* User Role Badge */}
       {!collapsed && (
         <div 
           style={{
-            margin: '12px 16px 4px',
-            padding: '6px 10px',
+            margin: '12px 14px 4px',
+            padding: '8px 12px',
             backgroundColor: '#1E293B',
             border: '1px solid #334155',
-            borderRadius: '2px',
+            borderRadius: '4px',
             fontSize: '11px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#38BDF8', fontWeight: 'bold' }}>
-            <ShieldCheck size={14} />
-            <span>OPERATIONAL INSTANCE</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#94A3B8' }}>
+            <User size={13} />
+            <span>Role:</span>
           </div>
-          <span style={{ fontSize: '10px', background: 'var(--color-terracotta)', color: '#FFF', padding: '1px 6px', fontWeight: 'bold' }}>
-            {userRole.toUpperCase()}
+          <span style={{ fontSize: '11px', backgroundColor: '#2563EB', color: '#FFF', padding: '2px 8px', fontWeight: 'bold', borderRadius: '3px' }}>
+            {friendlyRole}
           </span>
         </div>
       )}
 
       {/* Navigation Menu */}
-      <nav style={{ flexGrow: 1, padding: '12px 8px' }}>
+      <nav style={{ flexGrow: 1, padding: '10px 8px' }}>
         <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
           {menuItems.map((item) => {
             const Icon = item.icon;
@@ -131,17 +139,33 @@ export const Sidebar = ({
                     backgroundColor: isActive ? '#1E3A8A' : 'transparent',
                     color: isActive ? '#FFFFFF' : '#94A3B8',
                     border: 'none',
-                    borderLeft: isActive ? '4px solid var(--color-gold-accent)' : '4px solid transparent',
-                    borderRadius: '2px',
+                    borderLeft: isActive ? '4px solid #FBBF24' : '4px solid transparent',
+                    borderRadius: '4px',
                     fontWeight: isActive ? '700' : '500',
-                    fontSize: '14px',
+                    fontSize: '13px',
                     textAlign: 'left',
+                    cursor: 'pointer',
                     transition: 'all 0.15s ease'
                   }}
                   title={item.label}
                 >
-                  <Icon size={18} style={{ color: isActive ? 'var(--color-gold-accent)' : '#94A3B8', flexShrink: 0 }} />
-                  {!collapsed && <span>{item.label}</span>}
+                  <Icon 
+                    size={17} 
+                    style={{ 
+                      color: item.isLive ? '#EF4444' : (isActive ? '#FBBF24' : '#94A3B8'), 
+                      flexShrink: 0 
+                    }} 
+                  />
+                  {!collapsed && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexGrow: 1 }}>
+                      <span style={{ color: item.isLive ? '#FCA5A5' : 'inherit' }}>{item.label}</span>
+                      {item.isLive && (
+                        <span style={{ fontSize: '9px', backgroundColor: '#DC2626', color: '#FFF', padding: '1px 5px', borderRadius: '2px', fontWeight: 'bold' }}>
+                          LIVE
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </button>
               </li>
             );
@@ -149,7 +173,7 @@ export const Sidebar = ({
         </ul>
       </nav>
 
-      {/* Collapse Toggle for Mobile/Small */}
+      {/* Collapse Toggle for Small view */}
       {collapsed && (
         <button
           onClick={() => setCollapsed(false)}
@@ -159,7 +183,8 @@ export const Sidebar = ({
             border: 'none',
             color: '#94A3B8',
             padding: '8px',
-            borderRadius: '2px'
+            borderRadius: '4px',
+            cursor: 'pointer'
           }}
         >
           <ChevronRight size={18} />
@@ -174,19 +199,20 @@ export const Sidebar = ({
             width: '100%',
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
+            gap: '8px',
             justifyContent: collapsed ? 'center' : 'flex-start',
-            padding: '10px 14px',
-            backgroundColor: '#7F1D1D',
-            color: '#FFFFFF',
-            border: 'none',
-            borderRadius: '2px',
+            padding: '8px 12px',
+            backgroundColor: 'transparent',
+            color: '#94A3B8',
+            border: '1px solid #334155',
+            borderRadius: '4px',
             fontWeight: '600',
-            fontSize: '13px'
+            fontSize: '12px',
+            cursor: 'pointer'
           }}
-          title="Sign Out of Session"
+          title="Sign Out"
         >
-          <LogOut size={16} />
+          <LogOut size={14} />
           {!collapsed && <span>Sign Out</span>}
         </button>
       </div>

@@ -6,7 +6,8 @@ import { authenticateUser, requireRole } from './middleware/auth.js';
 import { 
   validateStateTransition, 
   evaluateScenarioEvents, 
-  filterParticipantMessages, 
+  evaluateParticipantDeliveredEvents,
+  generateAsymmetryMatrix,
   DELIVERY_STATUS 
 } from './services/simulationEngine.js';
 
@@ -445,10 +446,9 @@ app.get('/api/exercises/:id/messages', async (req, res) => {
     const ex = exRes.rows[0];
     const snapshot = typeof ex.scenario_snapshot_json === 'string' ? JSON.parse(ex.scenario_snapshot_json) : ex.scenario_snapshot_json;
     const elapsed = parseInt(elapsedSeconds || '0', 10);
-
-    const evaluatedEvents = evaluateScenarioEvents(snapshot.events || [], elapsed);
-    const userRole = role || req.user.role || 'commander';
-    const authorizedMessages = filterParticipantMessages(evaluatedEvents, userRole);
+    const sessionSeed = ex.session_code || ex.id || 'OP_FOG_DEFAULT';
+    const userRole = role || req.user.role || 'team_leader';
+    const authorizedMessages = evaluateParticipantDeliveredEvents(snapshot.events || [], userRole, elapsed, sessionSeed);
 
     res.json({
       exerciseId: ex.id,
@@ -474,8 +474,10 @@ app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async 
     const ex = exRes.rows[0];
     const snapshot = typeof ex.scenario_snapshot_json === 'string' ? JSON.parse(ex.scenario_snapshot_json) : ex.scenario_snapshot_json;
     const elapsed = parseInt(elapsedSeconds || '0', 10);
+    const sessionSeed = ex.session_code || ex.id || 'OP_FOG_DEFAULT';
 
     const evaluatedEvents = evaluateScenarioEvents(snapshot.events || [], elapsed);
+    const asymmetryMatrix = generateAsymmetryMatrix(snapshot.events || [], elapsed, sessionSeed);
 
     res.json({
       exerciseId: ex.id,
@@ -484,7 +486,8 @@ app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async 
       deliveredCount: evaluatedEvents.filter(e => e.status === DELIVERY_STATUS.DELIVERED).length,
       delayedCount: evaluatedEvents.filter(e => e.status === DELIVERY_STATUS.DELAYED).length,
       droppedCount: evaluatedEvents.filter(e => e.status === DELIVERY_STATUS.DROPPED).length,
-      events: evaluatedEvents
+      events: evaluatedEvents,
+      asymmetryMatrix
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch instructor audit log', details: err.message });
@@ -558,6 +561,58 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to log decision', details: err.message });
+  }
+});
+
+// Team Coordination Chat Messages
+app.get(['/api/exercises/:id/team-messages', '/api/exercises/code/:id/team-messages'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const result = await queryDB('SELECT team_messages_json FROM exercises WHERE UPPER(session_code) = UPPER($1) OR id = $1', [codeOrId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Exercise session not found' });
+    }
+    const msgs = typeof result.rows[0].team_messages_json === 'string' 
+      ? JSON.parse(result.rows[0].team_messages_json) 
+      : (result.rows[0].team_messages_json || []);
+    res.json(msgs);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch team messages', details: err.message });
+  }
+});
+
+app.post(['/api/exercises/:id/team-messages', '/api/exercises/code/:id/team-messages'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const { text, senderId, senderName, senderRole } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'Message text is required' });
+    }
+
+    const exResult = await queryDB('SELECT id, team_messages_json FROM exercises WHERE UPPER(session_code) = UPPER($1) OR id = $1', [codeOrId]);
+    if (exResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Exercise session not found' });
+    }
+
+    const currentMsgs = typeof exResult.rows[0].team_messages_json === 'string'
+      ? JSON.parse(exResult.rows[0].team_messages_json)
+      : (exResult.rows[0].team_messages_json || []);
+
+    const newMsg = {
+      id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      senderId: senderId || req.user?.serviceId || 'User',
+      senderName: senderName || req.user?.serviceId || 'User',
+      senderRole: senderRole || req.user?.role || 'team_leader',
+      text: text.trim(),
+      timestamp: new Date().toISOString()
+    };
+
+    const updatedMsgs = [...currentMsgs, newMsg];
+    await queryDB('UPDATE exercises SET team_messages_json = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [JSON.stringify(updatedMsgs), exResult.rows[0].id]);
+
+    res.status(201).json(newMsg);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to send team message', details: err.message });
   }
 });
 
