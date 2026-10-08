@@ -356,18 +356,48 @@ class MultiplayerEngine {
 
   // Submit participant decision
   submitDecision(sessionCode, decisionData) {
-    const session = this.getSessionByCode(sessionCode);
-    if (!session) return null;
+    let session = this.getSessionByCode(sessionCode);
+    if (!session) {
+      session = {
+        id: sessionCode,
+        sessionCode: sessionCode,
+        name: 'Exercise Session',
+        decisions: []
+      };
+    }
 
     const newDecision = {
-      id: `dec-${Date.now()}`,
-      timestamp: new Date().toISOString(),
+      id: decisionData.id || `dec-${Date.now()}`,
+      timestamp: decisionData.timestamp || new Date().toISOString(),
       ...decisionData
     };
 
-    session.decisions = [...(session.decisions || []), newDecision];
+    session.decisions = [...(session.decisions || []).filter(d => d.id !== newDecision.id), newDecision];
     this.updateSession(session);
     this.broadcast('DECISION_SUBMITTED', { sessionCode, decision: newDecision });
+
+    // Also push to backend API asynchronously if available
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(session.sessionCode || sessionCode)}/decisions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Service-Id': decisionData.submittedBy || 'Operator',
+          'X-User-Role': decisionData.submittedRole || 'team_leader'
+        },
+        body: JSON.stringify(newDecision)
+      })
+        .then(res => res.json())
+        .then(apiDecision => {
+          if (apiDecision?.id) {
+            session.decisions = (session.decisions || []).map(d => d.id === apiDecision.id ? { ...d, ...apiDecision } : d);
+            this.updateSession(session);
+            this.broadcast('DECISION_UPDATED', { sessionCode, decision: apiDecision });
+          }
+        })
+        .catch(() => {});
+    }
+
     return newDecision;
   }
 
@@ -460,6 +490,17 @@ class MultiplayerEngine {
                 session.disruptionsLog = msg.payload.disruptionsLog;
               }
               this.updateSession(session);
+            }
+          }
+          if (msg.type === 'DECISION_SUBMITTED' && msg.decision) {
+            const code = msg.sessionCode || sessionCode;
+            const session = this.getSessionByCode(code);
+            if (session) {
+              const exists = (session.decisions || []).some(d => d.id === msg.decision.id);
+              if (!exists) {
+                session.decisions = [...(session.decisions || []), msg.decision];
+                this.updateSession(session);
+              }
             }
           }
           this.notifyListeners(msg);
