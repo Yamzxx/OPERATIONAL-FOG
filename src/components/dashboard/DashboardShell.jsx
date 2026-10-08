@@ -14,6 +14,25 @@ import { DemoGuide } from './DemoGuide';
 import { storageService } from '../../services/storageService';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 
+// Session storage key used to survive page refresh for both instructor and participant.
+const ACTIVE_SESSION_KEY = 'op_fog_active_session_code';
+
+// Helper: fetch a single exercise by join code directly from the backend.
+async function fetchExerciseByCode(code) {
+  try {
+    const apiBase = (
+      typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+        ? import.meta.env.VITE_BACKEND_URL
+        : 'http://localhost:4000'
+    ) + '/api';
+    const res = await fetch(`${apiBase}/exercises/lookup/${encodeURIComponent(code.toUpperCase())}`);
+    if (res.ok) return await res.json();
+  } catch (e) {
+    // Backend unreachable — silently fail, no recovery possible
+  }
+  return null;
+}
+
 export const DashboardShell = ({ 
   currentUser, 
   onSignOut,
@@ -53,8 +72,24 @@ export const DashboardShell = ({
       });
       setSessions(Array.from(combinedMap.values()));
 
-      const aarsList = await storageService.fetchAARs();
-      setAARS(aarsList);
+      // AARs — always prefer backend; fall back to localStorage only if backend is unreachable
+      const apiBase = (
+        typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+          ? import.meta.env.VITE_BACKEND_URL
+          : 'http://localhost:4000'
+      ) + '/api';
+      try {
+        const aarRes = await fetch(`${apiBase}/aars`);
+        if (aarRes.ok) {
+          const backendAARs = await aarRes.json();
+          setAARS(backendAARs);
+        } else {
+          setAARS(storageService.getAARs());
+        }
+      } catch (_) {
+        setAARS(storageService.getAARs());
+      }
+
     };
 
     refreshData();
@@ -68,6 +103,29 @@ export const DashboardShell = ({
       unsubscribeMP();
     };
   }, []);
+
+  // Attempt to restore an active training session after a page refresh.
+  // Both instructor and participant persist their active session code to sessionStorage.
+  useEffect(() => {
+    const persistedCode = sessionStorage.getItem(ACTIVE_SESSION_KEY);
+    if (!persistedCode || activeTrainingSession) return;
+
+    fetchExerciseByCode(persistedCode).then((restoredSession) => {
+      if (!restoredSession) return;
+      // Only restore sessions that are still active/joinable
+      const activeStatuses = ['Waiting', 'Ready', 'In Progress', 'Active'];
+      if (!activeStatuses.includes(restoredSession.status)) {
+        sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+        return;
+      }
+      // Restore the scenario from the snapshot embedded in the exercise
+      const restoredScenario = restoredSession.scenarioSnapshot || restoredSession.scenario || null;
+      setActiveTrainingSession(restoredSession);
+      setActiveScenario(restoredScenario);
+      setActiveView('training-room');
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // runs once on mount
 
   const handleStartScenario = (scenario) => {
     // Create new single-user session
@@ -85,6 +143,10 @@ export const DashboardShell = ({
   };
 
   const handleMultiplayerSessionCreated = (mpSession) => {
+    // Persist so the instructor can restore their session after a page refresh
+    if (mpSession?.sessionCode) {
+      sessionStorage.setItem(ACTIVE_SESSION_KEY, mpSession.sessionCode);
+    }
     setSessions(multiplayerEngine.getSessions());
     setActiveTrainingSession(mpSession);
     setActiveScenario(mpSession.scenarioSnapshot || mpSession.scenario || scenarios[0]);
@@ -92,6 +154,11 @@ export const DashboardShell = ({
   };
 
   const handleJoinedSession = (joinedSession) => {
+    // Persist the join code so a page refresh can restore this participant's session
+    // by re-fetching from the backend (not from localStorage).
+    if (joinedSession?.sessionCode) {
+      sessionStorage.setItem(ACTIVE_SESSION_KEY, joinedSession.sessionCode);
+    }
     setSessions(multiplayerEngine.getSessions());
     setActiveTrainingSession(joinedSession);
     const scen = joinedSession.scenarioSnapshot || joinedSession.scenario || scenarios.find(s => s.id === joinedSession.scenarioId) || scenarios[0];
@@ -109,19 +176,22 @@ export const DashboardShell = ({
     storageService.addDecision(sessionId, decisionData);
   };
 
-  const handleEndExercise = (session, decisions, durationMinutes, events = [], asymmetryMatrix = [], teamMessages = [], disruptionsLog = []) => {
-    // Update session status
+  const handleEndExercise = async (session, decisions, durationMinutes, events = [], asymmetryMatrix = [], teamMessages = [], disruptionsLog = []) => {
+    // Clear the persisted active session on exercise completion
+    sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+
+    // Update session status in multiplayer mesh
     if (session.sessionCode) {
       multiplayerEngine.endExercise(session.sessionCode);
     } else {
       storageService.updateSessionStatus(session.id, 'Completed');
     }
-    
     setSessions(multiplayerEngine.getSessions());
 
-    // Save AAR record
-    const newAAR = storageService.saveAAR({
+    // Save comprehensive local AAR record
+    storageService.saveAAR({
       sessionId: session.id,
+      exerciseId: session.id,
       sessionCode: session.sessionCode || session.id,
       sessionName: session.name,
       scenarioTitle: session.scenarioTitle,
@@ -138,16 +208,65 @@ export const DashboardShell = ({
       participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
     });
 
-    setAARS(storageService.getAARs());
+    const apiBase = (
+      typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+        ? import.meta.env.VITE_BACKEND_URL
+        : 'http://localhost:4000'
+    ) + '/api';
+
+    // Primary path: call the authoritative AAR generation endpoint if available
+    let liveAAR = null;
+    if (session.id) {
+      try {
+        const aarRes = await fetch(`${apiBase}/aars/exercise/${session.id}`);
+        if (aarRes.ok) {
+          liveAAR = await aarRes.json();
+        }
+      } catch (e) { /* backend unreachable */ }
+    }
+
+    if (liveAAR) {
+      const mergedAAR = {
+        ...liveAAR,
+        asymmetryMatrix: asymmetryMatrix.length > 0 ? asymmetryMatrix : (liveAAR.asymmetryMatrix || []),
+        teamMessages: teamMessages.length > 0 ? teamMessages : (liveAAR.teamMessages || []),
+        disruptions: disruptionsLog.length > 0 ? disruptionsLog : (liveAAR.disruptions || [])
+      };
+      const existing = storageService.getAARs();
+      const withoutStale = existing.filter(a => a.id !== liveAAR.id && a.exerciseId !== session.id);
+      const cached = [mergedAAR, ...withoutStale];
+      try { localStorage.setItem('op_fog_aars_v1', JSON.stringify(cached)); } catch (_) {}
+      setAARS(cached);
+    } else {
+      setAARS(storageService.getAARs());
+    }
+
     setActiveTrainingSession(null);
     setActiveScenario(null);
     setActiveView('aar');
   };
 
-  const handleSaveInstructorNote = (aarId, noteText) => {
+
+
+  const handleSaveInstructorNote = async (aarId, noteText) => {
+    // Persist to PostgreSQL first — backend is authoritative for instructor notes
+    const apiBase = (
+      typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+        ? import.meta.env.VITE_BACKEND_URL
+        : 'http://localhost:4000'
+    ) + '/api';
+    try {
+      await fetch(`${apiBase}/aars/${aarId}/note`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteText })
+      });
+    } catch (_) {}
+    // Update localStorage cache so the note appears immediately without a round-trip
     const updated = storageService.saveAARNote(aarId, noteText);
     setAARS(updated);
   };
+
 
   const getPageTitle = () => {
     switch (activeView) {
@@ -261,9 +380,10 @@ export const DashboardShell = ({
               currentUser={currentUser}
               onSaveDecision={handleSaveDecision}
               onEndExercise={handleEndExercise}
-              existingDecisions={activeTrainingSession.decisions || storageService.getDecisionsForSession(activeTrainingSession.id)}
+              existingDecisions={activeTrainingSession.decisions || []}
             />
           )}
+
 
           {activeView === 'aar' && (
             <AfterActionReview 

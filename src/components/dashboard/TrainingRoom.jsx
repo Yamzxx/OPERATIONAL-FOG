@@ -140,10 +140,12 @@ export const TrainingRoom = ({
     };
   }, [session]);
 
+  const activeScenario = scenario || session?.scenarioSnapshot || session?.scenario || null;
+
   // Instantiate EventEngine on mount
   useEffect(() => {
-    const engine = new EventEngine(scenario, {
-      sessionSeed: session?.sessionCode || session?.id || scenario?.id || 'OP_FOG_DEFAULT_SEED'
+    const engine = new EventEngine(activeScenario, {
+      sessionSeed: session?.sessionCode || session?.id || activeScenario?.id || 'OP_FOG_DEFAULT_SEED'
     });
     engineRef.current = engine;
     engine.start();
@@ -155,7 +157,7 @@ export const TrainingRoom = ({
     return () => {
       unsubscribe();
     };
-  }, [scenario, session]);
+  }, [activeScenario, session]);
 
   // Simulation timer interval loop
   useEffect(() => {

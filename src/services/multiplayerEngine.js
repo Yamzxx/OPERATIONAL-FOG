@@ -20,9 +20,15 @@ export function generateSessionCode() {
   return code;
 }
 
-const API_BASE_URL = typeof process !== 'undefined' && process.env?.VITE_BACKEND_URL 
-  ? process.env.VITE_BACKEND_URL + '/api'
-  : 'http://localhost:4000/api';
+// Vite exposes env vars via import.meta.env in the browser, not process.env.
+// Using a safe guard so this also works in Node.js test environments.
+const API_BASE_URL = (
+  typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+    ? import.meta.env.VITE_BACKEND_URL
+    : (typeof process !== 'undefined' && process.env?.VITE_BACKEND_URL)
+      ? process.env.VITE_BACKEND_URL
+      : 'http://localhost:4000'
+) + '/api';
 
 class MultiplayerEngine {
   constructor() {
@@ -125,9 +131,12 @@ class MultiplayerEngine {
   }
 
   // Create new multiplayer session (Backend Authoritative with Local Backup)
-  async createSession({ scenario, sessionName, maxParticipants = 6, creatorServiceId, creatorRole = 'instructor' }) {
+  // sessionCode may be provided by the caller so the code shown in the UI is the same
+  // code written to PostgreSQL — preventing the two-code mismatch that caused join failures.
+  async createSession({ scenario, sessionName, maxParticipants = 6, creatorServiceId, creatorRole = 'instructor', sessionCode: callerCode }) {
     const sessions = this.getSessions();
-    const sessionCode = generateSessionCode();
+    // Use caller-provided code if given; otherwise generate one here.
+    const sessionCode = (callerCode || generateSessionCode()).toUpperCase().trim();
 
     const newSession = {
       id: `mp-sess-${Date.now()}`,
@@ -230,9 +239,18 @@ class MultiplayerEngine {
           }
         }
       } catch (err) {
+        const isNetworkError = (
+          err.message?.includes('Failed to fetch') ||
+          err.message?.includes('NetworkError') ||
+          err.message?.includes('fetch') ||
+          err.name === 'TypeError'
+        );
         const localSession = this.getSessionByCode(cleanCode);
-        if (!localSession) {
+        if (!isNetworkError && !localSession) {
           throw err;
+        }
+        if (isNetworkError) {
+          console.warn('Backend API server unreachable during join, attempting local cache fallback:', err.message);
         }
       }
     }

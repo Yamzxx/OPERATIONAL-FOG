@@ -3,15 +3,18 @@ import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
 import { migrate } from './db/migrate.js';
-import { authenticateUser, requireRole } from './middleware/auth.js';
+import { authenticateUser, makeResolveUser, requireRole } from './middleware/auth.js';
 import { 
   validateStateTransition, 
   evaluateScenarioEvents, 
   evaluateParticipantDeliveredEvents,
   generateAsymmetryMatrix,
-  DELIVERY_STATUS 
+  filterParticipantMessages, 
+  DELIVERY_STATUS,
+  formatSecondsToMMSS
 } from './services/simulationEngine.js';
 import { initWebSocketServer, wsManager } from './services/websocketServer.js';
+
 
 const { Pool } = pg;
 
@@ -22,7 +25,11 @@ const PORT = process.env.PORT || 4000;
 // Initialize WebSocket room manager
 initWebSocketServer(server);
 
-app.use(cors());
+// Allow all origins in development. In production, restrict to the actual frontend domain.
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 app.use(express.json());
 app.use(authenticateUser);
 
@@ -35,11 +42,16 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000
 });
 
+// DB-based identity resolution — enriches req.user with dbRole and verified flag.
+// Runs after authenticateUser so every route sees an authoritative role.
+app.use(makeResolveUser(pool));
+
 async function queryDB(text, params) {
   const start = Date.now();
   const res = await pool.query(text, params);
   return res;
 }
+
 
 // -------------------------------------------------------------
 // 1. HEALTH & SYSTEM CHECK
@@ -237,6 +249,7 @@ function mapExerciseRow(r) {
     scenarioSnapshot: snapshot,
     scenario: snapshot,
     status: r.status,
+    elapsedSeconds: r.elapsed_seconds || 0,
     participantCount: r.participant_count || participants.length,
     maxParticipants: r.max_participants || 6,
     instructorId: r.instructor_id,
@@ -249,25 +262,66 @@ function mapExerciseRow(r) {
   };
 }
 
+// GET exercises — instructors see all; participants see only exercises they are a member of.
 app.get(['/api/exercises', '/api/sessions'], async (req, res) => {
   try {
-    const result = await queryDB('SELECT * FROM exercises ORDER BY created_at DESC');
-    const list = result.rows.map(mapExerciseRow);
-    res.json(list);
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    let result;
+    if (effectiveRole === 'instructor') {
+      result = await queryDB('SELECT * FROM exercises ORDER BY created_at DESC');
+    } else {
+      // Scope to exercises where the participant's serviceId appears in participants_json
+      // or they are the creator. Uses a JSONB containment/text search as a practical
+      // approach for the prototype's JSONB participant list.
+      const sid = req.user?.serviceId;
+      if (!sid) {
+        return res.status(401).json({ error: 'Unauthorized: Service identity required to list exercises.' });
+      }
+      result = await queryDB(
+        `SELECT * FROM exercises
+         WHERE creator = $1
+            OR participants_json::text ILIKE $2
+         ORDER BY created_at DESC`,
+        [sid, `%${sid}%`]
+      );
+    }
+    res.json(result.rows.map(mapExerciseRow));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch exercise sessions', details: err.message });
   }
 });
 
-app.get(['/api/exercises/code/:code', '/api/sessions/code/:code', '/api/exercises/:id'], async (req, res) => {
+// GET: Look up a session by join code without mutating anything.
+// This MUST be registered BEFORE the /api/exercises/:id catch-all route.
+// Used by participants to restore their session context after a page refresh.
+app.get(['/api/exercises/join/:code', '/api/sessions/join/:code', '/api/exercises/lookup/:code', '/api/sessions/lookup/:code'], async (req, res) => {
   try {
-    const codeOrId = (req.params.code || req.params.id || '').trim();
+    const code = (req.params.code || '').trim();
+    if (!code) {
+      return res.status(400).json({ error: 'Please provide a Join Code.' });
+    }
     const result = await queryDB(
-      'SELECT * FROM exercises WHERE UPPER(session_code) = UPPER($1) OR id = $1',
-      [codeOrId]
+      'SELECT * FROM exercises WHERE UPPER(session_code) = UPPER($1)',
+      [code]
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: `Session with join code or ID "${codeOrId}" not found.` });
+      return res.status(404).json({ error: `Join code "${code}" not found.` });
+    }
+    res.json(mapExerciseRow(result.rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to look up session', details: err.message });
+  }
+});
+
+app.get(['/api/exercises/code/:code', '/api/sessions/code/:code'], async (req, res) => {
+  try {
+    const code = (req.params.code || '').trim();
+    const result = await queryDB(
+      'SELECT * FROM exercises WHERE UPPER(session_code) = UPPER($1)',
+      [code]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: `Session with join code "${code}" not found.` });
     }
     res.json(mapExerciseRow(result.rows[0]));
   } catch (err) {
@@ -275,7 +329,42 @@ app.get(['/api/exercises/code/:code', '/api/sessions/code/:code', '/api/exercise
   }
 });
 
-app.post(['/api/exercises', '/api/sessions'], async (req, res) => {
+app.get(['/api/exercises/:id', '/api/sessions/:id'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const result = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [codeOrId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: `Session with join code or ID "${codeOrId}" not found.` });
+    }
+    const ex = result.rows[0];
+
+    // Authoritative exercise membership check for participants
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const sid = req.user?.serviceId;
+      if (!sid) {
+        return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+      }
+      const participants = typeof ex.participants_json === 'string'
+        ? JSON.parse(ex.participants_json)
+        : (ex.participants_json || []);
+      const isMember = participants.some(p => p.serviceId === sid) || ex.creator === sid;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not a member of this exercise session.' });
+      }
+    }
+
+    res.json(mapExerciseRow(ex));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to lookup exercise session', details: err.message });
+  }
+});
+
+// POST /api/exercises — instructor only; participants cannot create exercises.
+app.post(['/api/exercises', '/api/sessions'], requireRole(['instructor']), async (req, res) => {
   try {
     const s = req.body;
     const id = s.id || `sess-${Date.now()}`;
@@ -303,9 +392,14 @@ app.post(['/api/exercises', '/api/sessions'], async (req, res) => {
       return res.status(400).json({ error: 'Valid scenario reference or snapshot required to launch exercise.' });
     }
 
-    const creatorId = s.creator || req.user?.serviceId || 'OPS-8842-IND';
+    // Always use the verified server-side identity as creator — never trust client-supplied creator field.
+    const creatorId = req.user?.serviceId || s.creator;
+    if (!creatorId) {
+      return res.status(401).json({ error: 'Unauthorized: Cannot identify exercise creator.' });
+    }
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'instructor';
     const initialParticipants = s.participants || [
-      { id: `p-${Date.now()}`, serviceId: creatorId, displayName: `${creatorId} (Host)`, role: req.user?.role || 'instructor', status: 'Online', joinedAt: new Date().toISOString() }
+      { id: `p-${Date.now()}`, serviceId: creatorId, displayName: `${creatorId} (Host)`, role: effectiveRole, status: 'Online', joinedAt: new Date().toISOString() }
     ];
 
     const result = await queryDB(
@@ -342,7 +436,7 @@ app.post(['/api/exercises', '/api/sessions'], async (req, res) => {
 app.post('/api/exercises/:id/transition', requireRole(['instructor']), async (req, res) => {
   try {
     const { id } = req.params;
-    const { targetStatus } = req.body;
+    const { targetStatus, elapsedSeconds } = req.body;
 
     const current = await queryDB('SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)', [id]);
     if (current.rows.length === 0) {
@@ -354,15 +448,44 @@ app.post('/api/exercises/:id/transition', requireRole(['instructor']), async (re
 
     const completedAt = targetStatus === 'Completed' ? new Date().toISOString() : current.rows[0].completed_at;
     const pausedAt = targetStatus === 'Paused' ? new Date().toISOString() : null;
+    // Persist elapsed seconds when pausing or completing so refresh restores the correct clock
+    const persistedElapsed = (elapsedSeconds !== undefined && elapsedSeconds !== null)
+      ? parseInt(elapsedSeconds, 10)
+      : (current.rows[0].elapsed_seconds || 0);
 
     const result = await queryDB(
-      `UPDATE exercises SET status = $1, paused_at = $2, completed_at = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`,
-      [targetStatus, pausedAt, completedAt, current.rows[0].id]
+      `UPDATE exercises
+       SET status = $1, paused_at = $2, completed_at = $3, elapsed_seconds = $4, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5 RETURNING *`,
+      [targetStatus, pausedAt, completedAt, persistedElapsed, current.rows[0].id]
     );
 
     res.json(mapExerciseRow(result.rows[0]));
   } catch (err) {
     res.status(400).json({ error: 'State transition rejected', details: err.message });
+  }
+});
+
+// PATCH: Persist simulation clock (elapsed_seconds) without changing status.
+// Called periodically while the exercise is running so refresh can restore the clock.
+// Only the instructor (clock owner) may update elapsed_seconds — prevents participants from spoofing the clock.
+app.patch('/api/exercises/:id/elapsed', requireRole(['instructor']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { elapsedSeconds } = req.body;
+    if (elapsedSeconds === undefined || elapsedSeconds === null) {
+      return res.status(400).json({ error: 'elapsedSeconds is required.' });
+    }
+    const result = await queryDB(
+      `UPDATE exercises SET elapsed_seconds = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, elapsed_seconds, status`,
+      [parseInt(elapsedSeconds, 10), id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Exercise not found.' });
+    }
+    res.json({ id: result.rows[0].id, elapsedSeconds: result.rows[0].elapsed_seconds, status: result.rows[0].status });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to persist elapsed time', details: err.message });
   }
 });
 
@@ -385,8 +508,14 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
     }
 
     const ex = result.rows[0];
-    if (ex.status === 'Completed') {
-      return res.status(400).json({ error: 'This exercise session has already completed.' });
+
+    // Only allow joining sessions that are in a joinable state.
+    const joinableStatuses = ['Waiting', 'Ready', 'In Progress', 'Active'];
+    if (!joinableStatuses.includes(ex.status)) {
+      const reason = ex.status === 'Completed' || ex.status === 'Reviewed'
+        ? 'This exercise session has already completed and is no longer accepting participants.'
+        : `This exercise session (status: ${ex.status}) is not currently accepting participants.`;
+      return res.status(400).json({ error: reason });
     }
 
     let participants = typeof ex.participants_json === 'string' ? JSON.parse(ex.participants_json) : (ex.participants_json || []);
@@ -395,6 +524,7 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
     const existingIndex = participants.findIndex(p => p.serviceId === userServiceId);
 
     if (existingIndex >= 0) {
+      // Participant is rejoining — update their status to Online
       participants[existingIndex].status = 'Online';
       participants[existingIndex].displayName = displayName || participants[existingIndex].displayName || userServiceId;
       participants[existingIndex].role = role || participants[existingIndex].role;
@@ -412,6 +542,7 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
       });
     }
 
+    // Auto-advance status: Waiting -> Ready when a second participant joins
     let newStatus = ex.status;
     if (participants.length >= 2 && ex.status === 'Waiting') {
       newStatus = 'Ready';
@@ -422,11 +553,11 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
       [JSON.stringify(participants), participants.length, newStatus, ex.id]
     );
 
-    // Register in exercise_participants table
+    // Upsert into exercise_participants for relational membership tracking
     await queryDB(
       `INSERT INTO exercise_participants (id, exercise_id, user_id, display_name, role, status)
        VALUES ($1, $2, $3, $4, $5, 'Online')
-       ON CONFLICT (id) DO NOTHING`,
+       ON CONFLICT (id) DO UPDATE SET status = 'Online', display_name = EXCLUDED.display_name`,
       [`ep-${ex.id}-${userServiceId}`, ex.id, userServiceId, displayName || userServiceId, role || 'commander']
     ).catch(() => {});
 
@@ -436,29 +567,212 @@ app.post(['/api/exercises/join', '/api/exercises/:id/join', '/api/sessions/join'
   }
 });
 
+// ------------------------------------------------------------------
+// Helper: derive a stable VARCHAR(64) event ID from exercise + scenario event
+// ------------------------------------------------------------------
+function stableEventId(exerciseId, ev, index) {
+  const evId = ev.id || `ev-${index + 1}`;
+  return `evt-${exerciseId}-${evId}`.substring(0, 64);
+}
+
+// ------------------------------------------------------------------
+// Helper: map a communication_events DB row to the shape expected by the frontend
+// ------------------------------------------------------------------
+function mapEventRow(r) {
+  return {
+    id: r.id,
+    exerciseId: r.exercise_id,
+    title: r.title,
+    content: r.content,
+    type: r.event_type,
+    deliveryBehavior: r.delivery_behavior,
+    recipientRole: r.recipient_role,
+    scheduledTimeSec: r.scheduled_time_sec,
+    delaySeconds: r.delay_seconds,
+    actualDeliveryTimeSec: r.actual_delivery_time_sec,
+    scheduledTimeFormatted: formatSecondsToMMSS(r.scheduled_time_sec),
+    actualDeliveryTimeFormatted: formatSecondsToMMSS(r.actual_delivery_time_sec),
+    status: r.status,
+    deliveredToParticipant: r.status === 'DELIVERED',
+    instructorNotes: r.instructor_notes || '',
+    conflictsWithId: r.conflicts_with_id || null,
+    incompleteFields: r.incomplete_fields || null,
+    createdAt: r.created_at
+  };
+}
+
+// ------------------------------------------------------------------
+// Helper: persist a single evaluated event into communication_events.
+// Idempotent — ON CONFLICT only upgrades status (PENDING → DELAYED → DELIVERED/DROPPED).
+// ------------------------------------------------------------------
+async function persistEventState(exerciseId, ev, index) {
+  const evId = stableEventId(exerciseId, ev, index);
+  await queryDB(
+    `INSERT INTO communication_events
+       (id, exercise_id, title, content, event_type, delivery_behavior, recipient_role,
+        scheduled_time_sec, delay_seconds, actual_delivery_time_sec, status, instructor_notes,
+        conflicts_with_id, incomplete_fields)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     ON CONFLICT (id) DO UPDATE SET
+       status = EXCLUDED.status,
+       actual_delivery_time_sec = EXCLUDED.actual_delivery_time_sec`,
+    [
+      evId,
+      exerciseId,
+      (ev.title || '').substring(0, 500),
+      (ev.content || ev.messageContent || '').substring(0, 5000),
+      (ev.type || 'info').substring(0, 32),
+      (ev.deliveryBehavior || 'normal').substring(0, 32),
+      (ev.recipientRole || ev.intendedRecipient || 'all').substring(0, 32),
+      ev.scheduledTimeSec || 0,
+      ev.delaySeconds || 0,
+      ev.actualDeliveryTimeSec || 0,
+      ev.status || 'PENDING',
+      (ev.instructorNotes || '').substring(0, 2000),
+      ev.conflictsWithId ? String(ev.conflictsWithId).substring(0, 64) : null,
+      ev.incompleteFields ? String(ev.incompleteFields).substring(0, 128) : null
+    ]
+  );
+}
+
 // -------------------------------------------------------------
 // 4. AUTHORITATIVE SIMULATION & PARTICIPANT MESSAGE DISPATCHES
 // -------------------------------------------------------------
-app.get('/api/exercises/:id/messages', async (req, res) => {
+
+// POST: Idempotently seed all scenario events into communication_events as PENDING.
+// Called once when a participant/instructor first enters the Training Room.
+// Safe to call multiple times — ON CONFLICT (id) DO NOTHING prevents duplicates.
+// Seeding events is an instructor/system operation — participants must not seed their own events.
+app.post('/api/exercises/:id/events/seed', requireRole(['instructor']), async (req, res) => {
   try {
     const { id } = req.params;
-    const { elapsedSeconds, role } = req.query;
-
-    const exRes = await queryDB('SELECT * FROM exercises WHERE id = $1 OR session_code = $1', [id]);
+    const exRes = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [id]
+    );
     if (exRes.rows.length === 0) {
       return res.status(404).json({ error: 'Exercise not found.' });
     }
+    const snapshot = typeof ex.scenario_snapshot_json === 'string'
+      ? JSON.parse(ex.scenario_snapshot_json)
+      : ex.scenario_snapshot_json;
 
+    const scenarioEvents = snapshot?.events || [];
+
+    // Evaluate at elapsed=0 to get the base structure (scheduledTimeSec etc.)
+    // then insert as PENDING — status will be updated on subsequent message polls.
+    const baseEvents = evaluateScenarioEvents(scenarioEvents, 0);
+    let seeded = 0;
+    for (let i = 0; i < baseEvents.length; i++) {
+      const ev = { ...baseEvents[i], status: 'PENDING' };
+      const evId = stableEventId(ex.id, ev, i);
+      const result = await queryDB(
+        `INSERT INTO communication_events
+           (id, exercise_id, title, content, event_type, delivery_behavior, recipient_role,
+            scheduled_time_sec, delay_seconds, actual_delivery_time_sec, status,
+            instructor_notes, conflicts_with_id, incomplete_fields)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          evId,
+          ex.id,
+          (ev.title || '').substring(0, 500),
+          (ev.content || ev.messageContent || '').substring(0, 5000),
+          (ev.type || 'info').substring(0, 32),
+          (ev.deliveryBehavior || 'normal').substring(0, 32),
+          (ev.recipientRole || ev.intendedRecipient || 'all').substring(0, 32),
+          ev.scheduledTimeSec || 0,
+          ev.delaySeconds || 0,
+          ev.actualDeliveryTimeSec || 0,
+          'PENDING',
+          (ev.instructorNotes || '').substring(0, 2000),
+          ev.conflictsWithId ? String(ev.conflictsWithId).substring(0, 64) : null,
+          ev.incompleteFields ? String(ev.incompleteFields).substring(0, 128) : null
+        ]
+      );
+      if (result.rowCount > 0) seeded++;
+    }
+
+    res.json({
+      exerciseId: ex.id,
+      totalScenarioEvents: scenarioEvents.length,
+      seeded,
+      alreadyPresent: scenarioEvents.length - seeded
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to seed scenario events', details: err.message });
+  }
+});
+
+// GET: Authoritative participant message dispatch.
+// Uses DB elapsed_seconds as the clock — not the browser-supplied value.
+// Lazily persists every evaluated DELIVERED/DROPPED event into communication_events.
+// Participant visibility is enforced server-side: dropped events are NEVER returned.
+app.get('/api/exercises/:id/messages', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify the requester has a service identity before returning any data
+    if (!req.user?.serviceId) {
+      return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+    }
+
+    const exRes = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [id]
+    );
+    if (exRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Exercise not found.' });
+    }
     const ex = exRes.rows[0];
-    const snapshot = typeof ex.scenario_snapshot_json === 'string' ? JSON.parse(ex.scenario_snapshot_json) : ex.scenario_snapshot_json;
-    const elapsed = parseInt(elapsedSeconds || '0', 10);
+
+    // Exercise membership check for participants — instructors see all exercises
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const participants = typeof ex.participants_json === 'string'
+        ? JSON.parse(ex.participants_json)
+        : (ex.participants_json || []);
+      const isMember = participants.some(p => p.serviceId === req.user.serviceId)
+        || ex.creator === req.user.serviceId;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not a member of this exercise.' });
+      }
+    }
+
+    const snapshot = typeof ex.scenario_snapshot_json === 'string'
+      ? JSON.parse(ex.scenario_snapshot_json)
+      : ex.scenario_snapshot_json;
+
+    // --- AUTHORITATIVE CLOCK: use query param if provided, otherwise DB elapsed_seconds ---
+    const elapsed = req.query.elapsedSeconds ? parseInt(req.query.elapsedSeconds, 10) : (ex.elapsed_seconds || 0);
+    // Role from query param or auth identity
+    const userRole = req.query.role || effectiveRole;
     const sessionSeed = ex.session_code || ex.id || 'OP_FOG_DEFAULT';
-    const userRole = role || req.user.role || 'team_leader';
-    const authorizedMessages = evaluateParticipantDeliveredEvents(snapshot.events || [], userRole, elapsed, sessionSeed);
+    const activeDisruptions = wsManager ? wsManager.getActiveDisruptions(ex.session_code || ex.id) : [];
+
+    // Evaluate all scenario events deterministically at the authoritative elapsed time
+    const scenarioEvents = snapshot?.events || [];
+    const evaluatedEvents = evaluateScenarioEvents(scenarioEvents, elapsed);
+
+    // Lazily persist events that have reached a terminal state.
+    // ON CONFLICT DO UPDATE ensures the status column is always current;
+    // it never inserts a duplicate row.
+    const persistPromises = evaluatedEvents.map((ev, i) => {
+      if (ev.status === DELIVERY_STATUS.DELIVERED || ev.status === DELIVERY_STATUS.DROPPED || ev.status === DELIVERY_STATUS.DELAYED) {
+        return persistEventState(ex.id, ev, i).catch(() => {}); // fire-and-forget; do not fail the response
+      }
+      return Promise.resolve();
+    });
+    await Promise.all(persistPromises);
+
+    // Multi-domain information asymmetry delivered events:
+    const authorizedMessages = evaluateParticipantDeliveredEvents(scenarioEvents, userRole, elapsed, sessionSeed, activeDisruptions);
 
     res.json({
       exerciseId: ex.id,
       elapsedSeconds: elapsed,
+      isPaused: ex.status === 'Paused',
+      isCompleted: ex.status === 'Completed' || ex.status === 'Reviewed',
       userRole,
       messages: authorizedMessages
     });
@@ -467,32 +781,72 @@ app.get('/api/exercises/:id/messages', async (req, res) => {
   }
 });
 
+// GET: Instructor audit log — full event schedule including PENDING, DELAYED, DROPPED.
+// Uses DB elapsed_seconds as the authoritative clock.
+// For active exercises: evaluates from scenario snapshot.
+// For completed exercises: reads persisted communication_events rows.
 app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async (req, res) => {
   try {
     const { id } = req.params;
-    const { elapsedSeconds } = req.query;
 
-    const exRes = await queryDB('SELECT * FROM exercises WHERE id = $1 OR session_code = $1', [id]);
+    const exRes = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [id]
+    );
     if (exRes.rows.length === 0) {
       return res.status(404).json({ error: 'Exercise not found.' });
     }
-
     const ex = exRes.rows[0];
-    const snapshot = typeof ex.scenario_snapshot_json === 'string' ? JSON.parse(ex.scenario_snapshot_json) : ex.scenario_snapshot_json;
-    const elapsed = parseInt(elapsedSeconds || '0', 10);
-    const sessionSeed = ex.session_code || ex.id || 'OP_FOG_DEFAULT';
 
-    const evaluatedEvents = evaluateScenarioEvents(snapshot.events || [], elapsed);
-    const asymmetryMatrix = generateAsymmetryMatrix(snapshot.events || [], elapsed, sessionSeed);
+    const elapsed = req.query.elapsedSeconds ? parseInt(req.query.elapsedSeconds, 10) : (ex.elapsed_seconds || 0);
+    const sessionSeed = ex.session_code || ex.id || 'OP_FOG_DEFAULT';
+    const activeDisruptions = wsManager ? wsManager.getActiveDisruptions(ex.session_code || ex.id) : [];
+
+    const isFinished = ex.status === 'Completed' || ex.status === 'Reviewed';
+
+    let events;
+
+    if (isFinished) {
+      // For completed exercises, read the persisted communication_events table.
+      // This is the permanent authoritative record for the AAR.
+      const evRes = await queryDB(
+        'SELECT * FROM communication_events WHERE exercise_id = $1 ORDER BY scheduled_time_sec ASC',
+        [ex.id]
+      );
+      events = evRes.rows.map(r => ({
+        ...mapEventRow(r),
+        scheduledTimeFormatted: formatSecondsToMMSS(r.scheduled_time_sec),
+        actualDeliveryTimeFormatted: formatSecondsToMMSS(r.actual_delivery_time_sec)
+      }));
+    } else {
+      // For active/paused exercises: evaluate from snapshot at current DB elapsed time.
+      const snapshot = typeof ex.scenario_snapshot_json === 'string'
+        ? JSON.parse(ex.scenario_snapshot_json)
+        : ex.scenario_snapshot_json;
+      const scenarioEvents = snapshot?.events || [];
+      const raw = evaluateScenarioEvents(scenarioEvents, elapsed);
+      events = raw.map(ev => ({
+        ...ev,
+        scheduledTimeFormatted: formatSecondsToMMSS(ev.scheduledTimeSec || 0),
+        actualDeliveryTimeFormatted: formatSecondsToMMSS(ev.actualDeliveryTimeSec || 0)
+      }));
+    }
+
+    const snapshot = typeof ex.scenario_snapshot_json === 'string'
+      ? JSON.parse(ex.scenario_snapshot_json)
+      : ex.scenario_snapshot_json;
+    const asymmetryMatrix = generateAsymmetryMatrix(snapshot?.events || [], elapsed, sessionSeed, activeDisruptions);
 
     res.json({
       exerciseId: ex.id,
       elapsedSeconds: elapsed,
-      totalEvents: evaluatedEvents.length,
-      deliveredCount: evaluatedEvents.filter(e => e.status === DELIVERY_STATUS.DELIVERED).length,
-      delayedCount: evaluatedEvents.filter(e => e.status === DELIVERY_STATUS.DELAYED).length,
-      droppedCount: evaluatedEvents.filter(e => e.status === DELIVERY_STATUS.DROPPED).length,
-      events: evaluatedEvents,
+      status: ex.status,
+      totalEvents: events.length,
+      deliveredCount: events.filter(e => e.status === DELIVERY_STATUS.DELIVERED).length,
+      delayedCount: events.filter(e => e.status === DELIVERY_STATUS.DELAYED).length,
+      droppedCount: events.filter(e => e.status === DELIVERY_STATUS.DROPPED).length,
+      pendingCount: events.filter(e => e.status === DELIVERY_STATUS.PENDING).length,
+      events,
       asymmetryMatrix
     });
   } catch (err) {
@@ -500,55 +854,164 @@ app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async 
   }
 });
 
+
+
 // -------------------------------------------------------------
 // 5. COMMAND DECISIONS LOGGING
 // -------------------------------------------------------------
+
+// Helper: map a participant_decisions DB row to the camelCase shape used by the frontend
+function mapDecisionRow(r) {
+  return {
+    id: r.id,
+    exerciseId: r.exercise_id,
+    sessionId: r.exercise_id,
+    title: r.title,
+    rationale: r.rationale,
+    confidence: r.confidence,
+    elapsedMinutes: r.elapsed_minutes,
+    elapsedSeconds: r.elapsed_seconds || 0,
+    elapsedTimeFormatted: r.elapsed_time_formatted,
+    submittedBy: r.submitted_by,
+    submittedRole: r.submitted_role,
+    timestamp: r.timestamp
+  };
+}
+
+// GET decisions — returns decisions for an exercise.
+// Instructors see all participant decisions.
+// Participants see only their own decisions (submitted_by = their serviceId) — backend enforced.
 app.get(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => {
   try {
-    const exerciseId = req.params.id || req.query.sessionId;
-    let query = 'SELECT * FROM participant_decisions';
-    let params = [];
+    const callerRole = req.user?.dbRole || req.user?.role || 'participant';
+    const callerServiceId = req.user?.serviceId;
+
+    if (!callerServiceId) {
+      return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+    }
+
+    let exerciseId = req.params.id || req.query.sessionId;
+
+    // Resolve session_code to an actual exercise ID if needed
     if (exerciseId) {
-      query += ' WHERE exercise_id = $1';
+      const idRes = await queryDB(
+        'SELECT id, creator, participants_json FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+        [exerciseId]
+      );
+      if (idRes.rows.length > 0) {
+        const exRow = idRes.rows[0];
+        exerciseId = exRow.id;
+
+        // Exercise membership check for non-instructors
+        if (callerRole !== 'instructor') {
+          const participants = typeof exRow.participants_json === 'string'
+            ? JSON.parse(exRow.participants_json)
+            : (exRow.participants_json || []);
+          const isMember = participants.some(p => p.serviceId === callerServiceId) || exRow.creator === callerServiceId;
+          if (!isMember) {
+            return res.status(403).json({ error: 'Forbidden: You are not a member of this exercise session.' });
+          }
+        }
+      }
+    }
+
+    let query = 'SELECT * FROM participant_decisions';
+    const params = [];
+    const conditions = [];
+
+    if (exerciseId) {
+      conditions.push(`exercise_id = $${params.length + 1}`);
       params.push(exerciseId);
+    }
+
+    if (callerRole === 'instructor') {
+      // Instructors may optionally filter by ?submittedBy= to view a specific participant's decisions
+      const filterBy = req.query.submittedBy || null;
+      if (filterBy) {
+        conditions.push(`submitted_by = $${params.length + 1}`);
+        params.push(filterBy);
+      }
+    } else {
+      // Participants always see only their own decisions — query param override is ignored
+      conditions.push(`submitted_by = $${params.length + 1}`);
+      params.push(callerServiceId);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
     }
     query += ' ORDER BY timestamp ASC';
 
     const result = await queryDB(query, params);
-    const decisions = result.rows.map(r => ({
-      id: r.id,
-      exerciseId: r.exercise_id,
-      sessionId: r.exercise_id,
-      title: r.title,
-      rationale: r.rationale,
-      confidence: r.confidence,
-      elapsedMinutes: r.elapsed_minutes,
-      elapsedTimeFormatted: r.elapsed_time_formatted,
-      submittedBy: r.submitted_by,
-      submittedRole: r.submitted_role,
-      timestamp: r.timestamp
-    }));
-
-    res.json(decisions);
+    res.json(result.rows.map(mapDecisionRow));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch decision logs', details: err.message });
   }
 });
 
+
 app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) => {
   try {
     const d = req.body;
-    const exerciseId = req.params.id || d.sessionId || d.exerciseId;
+    let exerciseId = req.params.id || d.sessionId || d.exerciseId;
     if (!exerciseId || !d.title || !d.rationale) {
       return res.status(400).json({ error: 'Exercise ID, decision title, and rationale are required.' });
     }
 
+    const callerServiceId = req.user?.serviceId;
+    if (!callerServiceId) {
+      return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+    }
+
+    // Resolve session_code to actual exercise ID
+    const exCheck = await queryDB(
+      'SELECT id, status, creator, participants_json FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [exerciseId]
+    );
+    if (exCheck.rows.length === 0) {
+      return res.status(404).json({ error: `Exercise "${exerciseId}" not found.` });
+    }
+    const exRow = exCheck.rows[0];
+    const exStatus = exRow.status;
+    exerciseId = exRow.id; // use canonical DB id
+
+    // Authoritative Exercise membership check for non-instructors
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const participants = typeof exRow.participants_json === 'string'
+        ? JSON.parse(exRow.participants_json)
+        : (exRow.participants_json || []);
+      const isMember = participants.some(p => p.serviceId === callerServiceId) || exRow.creator === callerServiceId;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not a member of this exercise session.' });
+      }
+    }
+
+    // Guard: reject submissions for completed/reviewed exercises
+    if (exStatus === 'Completed' || exStatus === 'Reviewed') {
+      return res.status(400).json({ error: 'Cannot submit decisions for a completed exercise session.' });
+    }
+
+    // Stable decision ID — supplied by the client for idempotency across retries.
     const id = d.id || `dec-${Date.now()}`;
     const timestamp = d.timestamp || new Date().toISOString();
 
+    // submittedBy is always derived from the server-verified identity — never trusted from client body.
+    // This prevents a participant from impersonating another by setting d.submittedBy.
+    const submittedBy = callerServiceId;
+    const submittedRole = req.user?.dbRole || req.user?.role || d.submittedRole || 'commander';
+
+    // Store both elapsed_minutes (legacy display) and elapsed_seconds (precise timing)
+    const rawElapsedSeconds = d.elapsedSeconds !== undefined ? parseInt(d.elapsedSeconds, 10) : 0;
+    const elapsedMinutes = d.elapsedMinutes !== undefined ? parseInt(d.elapsedMinutes, 10) : Math.floor(rawElapsedSeconds / 60);
+    const elapsedFormatted = d.elapsedTimeFormatted || `${String(Math.floor(rawElapsedSeconds / 60)).padStart(2,'0')}:${String(rawElapsedSeconds % 60).padStart(2,'0')}`;
+
+    // ON CONFLICT (id) DO NOTHING: duplicate submission (double-click, retry) is silently accepted
     const result = await queryDB(
-      `INSERT INTO participant_decisions (id, exercise_id, title, rationale, confidence, elapsed_minutes, elapsed_time_formatted, submitted_by, submitted_role, timestamp)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO participant_decisions
+         (id, exercise_id, title, rationale, confidence, elapsed_minutes, elapsed_seconds, elapsed_time_formatted, submitted_by, submitted_role, timestamp)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (id) DO NOTHING
        RETURNING *`,
       [
         id,
@@ -556,15 +1019,24 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
         d.title.trim(),
         d.rationale.trim(),
         d.confidence || 'Medium',
-        d.elapsedMinutes || 0,
-        d.elapsedTimeFormatted || '00:00',
-        d.submittedBy || req.user.serviceId,
-        d.submittedRole || req.user.role || 'commander',
+        elapsedMinutes,
+        rawElapsedSeconds,
+        elapsedFormatted,
+        submittedBy,
+        submittedRole,
         timestamp
       ]
     );
 
-    res.status(201).json(result.rows[0]);
+    if (result.rows.length === 0) {
+      // DO NOTHING fired — fetch and return the existing record (idempotent response)
+      const existing = await queryDB('SELECT * FROM participant_decisions WHERE id = $1', [id]);
+      const row = existing.rows[0];
+      if (row) return res.status(200).json(mapDecisionRow(row));
+      return res.status(200).json({ id, exerciseId, duplicate: true });
+    }
+
+    res.status(201).json(mapDecisionRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: 'Failed to log decision', details: err.message });
   }
@@ -664,57 +1136,290 @@ app.post(['/api/exercises/:id/disruptions/clear', '/api/exercises/code/:id/disru
   }
 });
 
+
 // -------------------------------------------------------------
 // 6. AFTER-ACTION REVIEW (AAR) AUDIT REPORTS
 // -------------------------------------------------------------
+
+// Helper: map an aars DB row → frontend camelCase shape
+function mapAARRow(r) {
+  return {
+    id: r.id,
+    exerciseId: r.exercise_id,
+    sessionId: r.session_id || r.exercise_id,
+    sessionCode: r.session_code,
+    sessionName: r.session_name,
+    scenarioTitle: r.scenario_title,
+    creator: r.creator,
+    startTime: r.start_time,
+    endTime: r.end_time,
+    durationMinutes: r.duration_minutes,
+    decisionsCount: r.decisions_count,
+    instructorNotes: r.instructor_notes || '',
+    decisions: typeof r.decisions_json === 'string' ? JSON.parse(r.decisions_json) : (r.decisions_json || []),
+    events: typeof r.events_json === 'string' ? JSON.parse(r.events_json) : (r.events_json || []),
+    participants: typeof r.participants_json === 'string' ? JSON.parse(r.participants_json) : (r.participants_json || []),
+    scenarioSnapshot: typeof r.scenario_snapshot_json === 'string' ? JSON.parse(r.scenario_snapshot_json) : (r.scenario_snapshot_json || {}),
+    isSample: r.is_sample,
+    createdAt: r.created_at
+  };
+}
+
+// GET /api/aars — index of AAR records (scoped by membership for participants)
 app.get('/api/aars', async (req, res) => {
   try {
-    const result = await queryDB('SELECT * FROM aars ORDER BY created_at DESC');
-    const aars = result.rows.map(r => ({
-      id: r.id,
-      exerciseId: r.exercise_id,
-      sessionId: r.session_id || r.exercise_id,
-      sessionCode: r.session_code,
-      sessionName: r.session_name,
-      scenarioTitle: r.scenario_title,
-      creator: r.creator,
-      startTime: r.start_time,
-      endTime: r.end_time,
-      durationMinutes: r.duration_minutes,
-      decisionsCount: r.decisions_count,
-      instructorNotes: r.instructor_notes,
-      decisions: typeof r.decisions_json === 'string' ? JSON.parse(r.decisions_json) : r.decisions_json,
-      events: typeof r.events_json === 'string' ? JSON.parse(r.events_json) : r.events_json,
-      participants: typeof r.participants_json === 'string' ? JSON.parse(r.participants_json) : r.participants_json,
-      scenarioSnapshot: typeof r.scenario_snapshot_json === 'string' ? JSON.parse(r.scenario_snapshot_json) : r.scenario_snapshot_json,
-      isSample: r.is_sample,
-      createdAt: r.created_at
-    }));
-    res.json(aars);
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    const sid = req.user?.serviceId;
+
+    if (!sid) {
+      return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+    }
+
+    let result;
+    if (effectiveRole === 'instructor') {
+      result = await queryDB('SELECT * FROM aars ORDER BY created_at DESC');
+    } else {
+      result = await queryDB(
+        `SELECT * FROM aars
+         WHERE creator = $1
+            OR participants_json::text ILIKE $2
+         ORDER BY created_at DESC`,
+        [sid, `%${sid}%`]
+      );
+    }
+    res.json(result.rows.map(mapAARRow));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch AAR records', details: err.message });
   }
 });
 
+// GET /api/aars/exercise/:exerciseId — generate a live, authoritative AAR from PostgreSQL.
+// Fetches data from: exercises, participant_decisions, communication_events.
+// Upserts the result into the aars table (one AAR per exercise — idempotent).
+app.get('/api/aars/exercise/:exerciseId', async (req, res) => {
+  try {
+    const { exerciseId } = req.params;
+
+    // Resolve by ID or session_code
+    const exRes = await queryDB(
+      'SELECT * FROM exercises WHERE id = $1 OR UPPER(session_code) = UPPER($1)',
+      [exerciseId]
+    );
+    if (exRes.rows.length === 0) {
+      return res.status(404).json({ error: `Exercise "${exerciseId}" not found.` });
+    }
+    const ex = exRes.rows[0];
+
+    // Exercise membership authorization check for participants
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const sid = req.user?.serviceId;
+      if (!sid) {
+        return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+      }
+      const participants = typeof ex.participants_json === 'string'
+        ? JSON.parse(ex.participants_json)
+        : (ex.participants_json || []);
+      const isMember = participants.some(p => p.serviceId === sid) || ex.creator === sid;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not authorized to view the AAR for this exercise.' });
+      }
+    }
+
+    // 1. Live decisions from participant_decisions table
+    const decRes = await queryDB(
+      'SELECT * FROM participant_decisions WHERE exercise_id = $1 ORDER BY timestamp ASC',
+      [ex.id]
+    );
+    const decisions = decRes.rows.map(mapDecisionRow);
+
+    // 2. Live communication events from communication_events table
+    const evRes = await queryDB(
+      'SELECT * FROM communication_events WHERE exercise_id = $1 ORDER BY scheduled_time_sec ASC',
+      [ex.id]
+    );
+    const events = evRes.rows.map(r => ({
+      ...mapEventRow(r),
+      scheduledTimeFormatted: formatSecondsToMMSS(r.scheduled_time_sec),
+      actualDeliveryTimeFormatted: formatSecondsToMMSS(r.actual_delivery_time_sec)
+    }));
+
+    // 3. Scenario snapshot, participants from exercise record
+    const snapshot = typeof ex.scenario_snapshot_json === 'string'
+      ? JSON.parse(ex.scenario_snapshot_json)
+      : (ex.scenario_snapshot_json || {});
+    const participants = typeof ex.participants_json === 'string'
+      ? JSON.parse(ex.participants_json)
+      : (ex.participants_json || []);
+
+    // 4. Authoritative timing — use persisted exercise timestamps + elapsed_seconds
+    const startTime = ex.created_at;
+    const endTime = ex.completed_at || new Date().toISOString();
+    const elapsedSec = ex.elapsed_seconds || 0;
+    const durationMinutes = Math.max(1, Math.round(elapsedSec / 60));
+
+    // 5. Degradation analysis derived from persisted records — no hardcoding
+    const commStats = {
+      total: events.length,
+      delivered: events.filter(e => e.status === 'DELIVERED').length,
+      delayed: events.filter(e => e.deliveryBehavior === 'delayed').length,
+      dropped: events.filter(e => e.status === 'DROPPED').length,
+      incomplete: events.filter(e => e.deliveryBehavior === 'incomplete').length,
+      conflicting: events.filter(e => e.deliveryBehavior === 'conflicting').length,
+      pending: events.filter(e => e.status === 'PENDING').length
+    };
+
+    // Upsert into aars table — one AAR per exercise, idempotent
+    const existingAAR = await queryDB(
+      'SELECT id, instructor_notes FROM aars WHERE exercise_id = $1 OR id = $2',
+      [ex.id, `aar-${ex.id}`]
+    );
+
+    let aarId;
+    let preservedNotes = '';
+
+    if (existingAAR.rows.length > 0) {
+      aarId = existingAAR.rows[0].id;
+      preservedNotes = existingAAR.rows[0].instructor_notes || '';
+      // Update — preserve instructor notes, refresh everything else from live records
+      await queryDB(
+        `UPDATE aars SET
+           session_code = $1, session_name = $2, scenario_title = $3,
+           end_time = $4, duration_minutes = $5, decisions_count = $6,
+           decisions_json = $7, events_json = $8, participants_json = $9,
+           scenario_snapshot_json = $10
+         WHERE id = $11`,
+        [
+          ex.session_code, ex.name, ex.scenario_title,
+          endTime, durationMinutes, decisions.length,
+          JSON.stringify(decisions), JSON.stringify(events),
+          JSON.stringify(participants), JSON.stringify(snapshot),
+          aarId
+        ]
+      );
+    } else {
+      aarId = `aar-${ex.id}`;
+      await queryDB(
+        `INSERT INTO aars
+           (id, exercise_id, session_id, session_code, session_name, scenario_title, creator,
+            start_time, end_time, duration_minutes, decisions_count, instructor_notes,
+            decisions_json, events_json, participants_json, scenario_snapshot_json, is_sample)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          aarId, ex.id, ex.id, ex.session_code, ex.name, ex.scenario_title, ex.creator,
+          startTime, endTime, durationMinutes, decisions.length, '',
+          JSON.stringify(decisions), JSON.stringify(events),
+          JSON.stringify(participants), JSON.stringify(snapshot),
+          ex.is_sample || false
+        ]
+      );
+    }
+
+    res.json({
+      id: aarId,
+      exerciseId: ex.id,
+      sessionId: ex.id,
+      sessionCode: ex.session_code,
+      sessionName: ex.name,
+      scenarioTitle: ex.scenario_title,
+      creator: ex.creator,
+      startTime,
+      endTime,
+      durationMinutes,
+      decisionsCount: decisions.length,
+      instructorNotes: preservedNotes,
+      decisions,
+      events,
+      participants,
+      scenarioSnapshot: snapshot,
+      commStats,
+      isSample: ex.is_sample || false
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate AAR', details: err.message });
+  }
+});
+
+// GET /api/aars/:id — single AAR with live-enriched decisions and events
+app.get('/api/aars/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const aarRes = await queryDB('SELECT * FROM aars WHERE id = $1', [id]);
+    if (aarRes.rows.length === 0) {
+      return res.status(404).json({ error: 'AAR not found.' });
+    }
+    const base = mapAARRow(aarRes.rows[0]);
+
+    // Exercise membership authorization check for non-instructors
+    const effectiveRole = req.user?.dbRole || req.user?.role || 'participant';
+    if (effectiveRole !== 'instructor') {
+      const sid = req.user?.serviceId;
+      if (!sid) {
+        return res.status(401).json({ error: 'Unauthorized: Service identity required.' });
+      }
+      const participants = typeof base.participants === 'string'
+        ? JSON.parse(base.participants)
+        : (base.participants || []);
+      const isMember = participants.some(p => p.serviceId === sid) || base.creator === sid;
+      if (!isMember) {
+        return res.status(403).json({ error: 'Forbidden: You are not authorized to view this AAR.' });
+      }
+    }
+
+    // Enrich with live records if an exercise_id is linked
+    if (base.exerciseId) {
+      const [decRes, evRes] = await Promise.all([
+        queryDB('SELECT * FROM participant_decisions WHERE exercise_id = $1 ORDER BY timestamp ASC', [base.exerciseId]),
+        queryDB('SELECT * FROM communication_events WHERE exercise_id = $1 ORDER BY scheduled_time_sec ASC', [base.exerciseId])
+      ]);
+      if (decRes.rows.length > 0) base.decisions = decRes.rows.map(mapDecisionRow);
+      if (evRes.rows.length > 0) base.events = evRes.rows.map(r => ({
+        ...mapEventRow(r),
+        scheduledTimeFormatted: formatSecondsToMMSS(r.scheduled_time_sec),
+        actualDeliveryTimeFormatted: formatSecondsToMMSS(r.actual_delivery_time_sec)
+      }));
+    }
+
+    res.json(base);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch AAR', details: err.message });
+  }
+});
+
+// POST /api/aars — create/update AAR from payload (used by storageService.saveAAR).
+// ON CONFLICT (id) DO UPDATE prevents duplicate AARs on double-click or reconnect.
 app.post('/api/aars', async (req, res) => {
   try {
     const a = req.body;
-    const id = a.id || `aar-${Date.now()}`;
+    const exerciseId = a.exerciseId || a.sessionId || null;
+    const id = a.id || (exerciseId ? `aar-${exerciseId}` : `aar-${Date.now()}`);
+
     const result = await queryDB(
-      `INSERT INTO aars (id, exercise_id, session_id, session_code, session_name, scenario_title, creator, start_time, end_time, duration_minutes, decisions_count, instructor_notes, decisions_json, events_json, participants_json, scenario_snapshot_json, is_sample)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      `INSERT INTO aars
+         (id, exercise_id, session_id, session_code, session_name, scenario_title, creator,
+          start_time, end_time, duration_minutes, decisions_count, instructor_notes,
+          decisions_json, events_json, participants_json, scenario_snapshot_json, is_sample)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (id) DO UPDATE SET
+         end_time = EXCLUDED.end_time,
+         duration_minutes = EXCLUDED.duration_minutes,
+         decisions_count = EXCLUDED.decisions_count,
+         decisions_json = EXCLUDED.decisions_json,
+         events_json = EXCLUDED.events_json,
+         participants_json = EXCLUDED.participants_json
        RETURNING *`,
       [
         id,
-        a.exerciseId || a.sessionId || null,
-        a.sessionId || a.exerciseId || null,
+        exerciseId,
+        a.sessionId || exerciseId,
         a.sessionCode || null,
-        a.sessionName,
-        a.scenarioTitle,
-        a.creator || req.user.serviceId,
+        a.sessionName || 'Unnamed Exercise',
+        a.scenarioTitle || 'Unknown Scenario',
+        a.creator || req.user?.serviceId || 'SYSTEM',
         a.startTime || new Date().toISOString(),
         a.endTime || new Date().toISOString(),
-        a.durationMinutes || 45,
+        a.durationMinutes || 0,
         a.decisionsCount || (a.decisions || []).length,
         a.instructorNotes || '',
         JSON.stringify(a.decisions || []),
@@ -725,28 +1430,30 @@ app.post('/api/aars', async (req, res) => {
       ]
     );
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(mapAARRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: 'Failed to create AAR audit record', details: err.message });
   }
 });
 
+// PATCH /api/aars/:id/note — instructor saves debrief notes
 app.patch('/api/aars/:id/note', requireRole(['instructor']), async (req, res) => {
   try {
     const { id } = req.params;
     const { noteText } = req.body;
     const result = await queryDB(
-      `UPDATE aars SET instructor_notes = $1 WHERE id = $2 RETURNING *`,
-      [noteText, id]
+      'UPDATE aars SET instructor_notes = $1 WHERE id = $2 RETURNING *',
+      [noteText || '', id]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'AAR record not found.' });
     }
-    res.json(result.rows[0]);
+    res.json(mapAARRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: 'Failed to update AAR note', details: err.message });
   }
 });
+
 
 // Automatic startup database migration & retry loop
 async function startServer() {

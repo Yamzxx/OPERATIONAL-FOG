@@ -37,8 +37,9 @@ export const AfterActionReview = ({
   const [selectedAARId, setSelectedAARId] = useState(aars[0]?.id || null);
   const [noteInput, setNoteInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeReportTab, setActiveReportTab] = useState('summary'); // summary | asymmetry | decisions | chat | replay
+  const [activeReportTab, setActiveReportTab] = useState('summary'); // summary | asymmetry | decisions | chat | disruptions | participant_history | comms_analysis | replay
   const [expandedEventId, setExpandedEventId] = useState(null);
+  const [selectedParticipantRole, setSelectedParticipantRole] = useState('ALL');
 
   const selectedAAR = aars.find(a => a.id === selectedAARId) || aars[0];
 
@@ -69,6 +70,17 @@ export const AfterActionReview = ({
   const participants = selectedAAR?.participants || [
     { displayName: selectedAAR?.creator || 'Trainee', role: 'team_leader' }
   ];
+  // commStats is populated by the backend /api/aars/exercise/:id endpoint from real records.
+  // Fall back to counting from the events array if not present (e.g. sample AARs).
+  const commStats = selectedAAR?.commStats || {
+    total: events.length,
+    delivered: events.filter(e => e.status === 'DELIVERED' || e.deliveryBehavior === 'normal').length,
+    delayed: events.filter(e => e.deliveryBehavior === 'delayed').length,
+    dropped: events.filter(e => e.status === 'DROPPED' || e.deliveryBehavior === 'dropped').length,
+    incomplete: events.filter(e => e.deliveryBehavior === 'incomplete').length,
+    conflicting: events.filter(e => e.deliveryBehavior === 'conflicting').length,
+    pending: events.filter(e => e.status === 'PENDING').length
+  };
 
   // Calculate statistics on information friction
   let delayedEventsCount = 0;
@@ -230,6 +242,8 @@ export const AfterActionReview = ({
                 { id: 'decisions', label: `🎯 Decisions Audit (${decisions.length})` },
                 { id: 'chat', label: `💬 Team Chat Log (${teamMessages.length})` },
                 { id: 'disruptions', label: `⚡ Disruptions (${disruptions.length})` },
+                { id: 'participant_history', label: '👤 Participant History' },
+                { id: 'comms_analysis', label: '📈 Comms Analysis' },
                 { id: 'replay', label: '⏱️ Timeline Replay' }
               ].map(tab => (
                 <button
@@ -256,7 +270,6 @@ export const AfterActionReview = ({
             {/* TAB 1: SUMMARY & PERFORMANCE */}
             {activeReportTab === 'summary' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                
                 {/* Stat Metric Cards */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
                   <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '12px' }}>
@@ -293,6 +306,32 @@ export const AfterActionReview = ({
                       {disruptions.length} Injections
                     </div>
                   </div>
+
+                  {/* Degradation breakdown row — all values from commStats derived from real DB records */}
+                  {commStats.total > 0 && (
+                    <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #E2E8F0', paddingTop: '10px', display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#15803D' }}>{commStats.delivered}</strong> Delivered
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#D97706' }}>{commStats.delayed}</strong> Delayed
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#DC2626' }}>{commStats.dropped}</strong> Dropped
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#7C3AED' }}>{commStats.incomplete}</strong> Incomplete
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        <strong style={{ color: '#0369A1' }}>{commStats.conflicting}</strong> Conflicting
+                      </span>
+                      {commStats.pending > 0 && (
+                        <span style={{ fontSize: '11px', color: '#64748B' }}>
+                          <strong style={{ color: '#94A3B8' }}>{commStats.pending}</strong> Pending
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Information Asymmetry Core Evaluation Banner */}
@@ -630,6 +669,106 @@ export const AfterActionReview = ({
               <TimelineReplay aar={selectedAAR} />
             )}
 
+            {/* TAB 7: PARTICIPANT HISTORY */}
+            {activeReportTab === 'participant_history' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', backgroundColor: '#F8FAFC', padding: '10px 14px', border: '1px solid #CBD5E1' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Select Participant Role:</span>
+                  {['ALL', 'COMMANDER', 'FIELD_UNIT', 'LOGISTICS', 'SIGNALS'].map(role => (
+                    <button
+                      key={role}
+                      onClick={() => setSelectedParticipantRole(role)}
+                      style={{
+                        background: selectedParticipantRole === role ? 'var(--color-primary-navy)' : '#FFF',
+                        color: selectedParticipantRole === role ? '#FFF' : '#334155',
+                        border: '1px solid #CBD5E1',
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {role}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '16px' }}>
+                  <h4 style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '8px' }}>
+                    Information Available at Time of Decision
+                  </h4>
+                  <p style={{ fontSize: '12px', color: '#64748B', marginBottom: '14px' }}>
+                    Contrast the information delivered to the participant against the ground-truth exercise state.
+                  </p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {events.map((ev, i) => (
+                      <div key={ev.id || i} style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', padding: '12px', fontSize: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                          <span>[{ev.scheduledTimeFormatted || ev.time || '00:00'}] {ev.title}</span>
+                          <span style={{ textTransform: 'uppercase', color: ev.status === 'DROPPED' || ev.deliveryBehavior === 'dropped' ? '#DC2626' : '#15803D' }}>
+                            {ev.deliveryBehavior || ev.status || 'delivered'}
+                          </span>
+                        </div>
+                        <div style={{ color: '#334155', marginTop: '4px' }}>{ev.content}</div>
+                      </div>
+                    ))}
+                    {events.length === 0 && (
+                      <div style={{ padding: '16px', fontSize: '13px', color: '#64748B' }}>No communication events recorded for this exercise.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 4: COMMS ANALYSIS */}
+            {activeReportTab === 'comms_analysis' && (
+              <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '16px' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '12px' }}>
+                  Scheduled vs Actual Telemetry Delivery Audit
+                </h4>
+
+                {events.length === 0 ? (
+                  <div style={{ padding: '16px', fontSize: '13px', color: '#64748B' }}>No communication events recorded for this exercise.</div>
+                ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1', textAlign: 'left' }}>
+                      <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Event Title</th>
+                      <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Delivery Behavior</th>
+                      <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Target Role</th>
+                      <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Scheduled</th>
+                      <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Actual Delivery</th>
+                      <th style={{ padding: '8px 10px', fontWeight: 'bold' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {events.map((ev, i) => {
+                      const statusColor = ev.status === 'DROPPED' ? '#DC2626'
+                        : ev.status === 'DELAYED' ? '#D97706'
+                        : ev.status === 'DELIVERED' ? '#15803D'
+                        : '#94A3B8';
+                      return (
+                        <tr key={ev.id || i} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                          <td style={{ padding: '8px 10px', fontWeight: 'bold' }}>{ev.title}</td>
+                          <td style={{ padding: '8px 10px', textTransform: 'uppercase' }}>{ev.deliveryBehavior || 'normal'}</td>
+                          <td style={{ padding: '8px 10px' }}>{ev.intendedRecipient || ev.recipientRole || 'all'}</td>
+                          <td style={{ padding: '8px 10px' }}>{ev.scheduledTimeFormatted || ev.time || '00:00'}</td>
+                          <td style={{ padding: '8px 10px' }}>
+                            {ev.status === 'DROPPED' ? 'UNDELIVERED (DROPPED)'
+                              : (ev.actualDeliveryTimeFormatted || ev.scheduledTimeFormatted || ev.time || '00:00')}
+                          </td>
+                          <td style={{ padding: '8px 10px', fontWeight: 'bold', color: statusColor }}>
+                            {ev.status || (ev.deliveryBehavior === 'dropped' ? 'DROPPED' : 'DELIVERED')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ backgroundColor: '#FFF', padding: '32px', textAlign: 'center', color: '#64748B', border: '1px solid #CBD5E1', borderRadius: '6px' }}>

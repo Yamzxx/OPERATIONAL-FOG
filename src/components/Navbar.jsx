@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { Home, Info, Layers, Workflow, LogIn, Menu, X, BellRing } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
 
 export const Navbar = ({ activeTab, setActiveTab, onOpenSignIn }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { t } = useLanguage();
 
   const navItems = [
-    { id: 'home', label: 'Home', icon: Home },
-    { id: 'about', label: 'About the Platform', icon: Info },
-    { id: 'modules', label: 'Training Modules', icon: Layers },
-    { id: 'how-it-works', label: 'How It Works', icon: Workflow },
-    { id: 'updates', label: 'Updates & Resources', icon: BellRing },
+    { id: 'home', labelKey: 'nav_home', defaultLabel: 'Home', icon: Home },
+    { id: 'about', labelKey: 'nav_about', defaultLabel: 'About the Platform', icon: Info },
+    { id: 'modules', labelKey: 'nav_modules', defaultLabel: 'Training Modules', icon: Layers },
+    { id: 'how-it-works', labelKey: 'nav_how_it_works', defaultLabel: 'How It Works', icon: Workflow },
+    { id: 'updates', labelKey: 'nav_updates', defaultLabel: 'Updates & Resources', icon: BellRing },
   ];
 
   const handleNavClick = (id) => {
@@ -39,7 +41,7 @@ export const Navbar = ({ activeTab, setActiveTab, onOpenSignIn }) => {
                     onClick={() => handleNavClick(item.id)}
                   >
                     <Icon size={16} />
-                    <span>{item.label}</span>
+                    <span>{t(item.labelKey, item.defaultLabel)}</span>
                   </button>
                 </li>
               );
@@ -54,7 +56,7 @@ export const Navbar = ({ activeTab, setActiveTab, onOpenSignIn }) => {
               style={{ borderRight: 'none', borderLeft: '1px solid rgba(255,255,255,0.2)' }}
             >
               <LogIn size={16} />
-              <span>Sign In</span>
+              <span>{t('nav_sign_in', 'Sign In')}</span>
             </button>
           </div>
         </div>
@@ -62,3 +64,4 @@ export const Navbar = ({ activeTab, setActiveTab, onOpenSignIn }) => {
     </nav>
   );
 };
+

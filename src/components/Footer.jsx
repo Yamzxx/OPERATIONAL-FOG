@@ -1,8 +1,11 @@
 import React from 'react';
 import { NationalEmblem, IndianFlag } from './EmblemAndFlag';
 import { ShieldAlert, Mail, Phone, MapPin, ExternalLink } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
 
 export const Footer = ({ onOpenDisclaimerModal }) => {
+  const { t } = useLanguage();
+
   return (
     <footer className="gov-footer">
       <div className="gov-container">
@@ -10,8 +13,7 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
         <div className="gov-disclaimer-box">
           <ShieldAlert size={20} style={{ color: '#EAB308', flexShrink: 0 }} />
           <div>
-            <strong>DISCLAIMER & PROTOTYPE NOTICE:</strong> Independent training prototype. Not an official Government of India service. 
-            All scenarios, messages, and telemetry generated within this application are synthetic and intended strictly for educational and operational simulation training.
+            <strong>{t('footer_disclaimer_title', 'DISCLAIMER & PROTOTYPE NOTICE:')}</strong> {t('footer_disclaimer_text', 'Independent training prototype. Not an official Government of India service. All scenarios, messages, and telemetry generated within this application are synthetic and intended strictly for educational and operational simulation training.')}
           </div>
         </div>
 
@@ -22,41 +24,41 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
               <NationalEmblem height={48} />
               <div>
                 <div className="gov-footer-title">OPERATIONAL FOG</div>
-                <div style={{ fontSize: '11px', color: '#94A3B8' }}>Communication Resilience Platform</div>
+                <div style={{ fontSize: '11px', color: '#94A3B8' }}>{t('comm_resilience_platform', 'Communication Resilience Platform')}</div>
               </div>
             </div>
             <p className="gov-footer-subtitle">
-              Simulating degraded communication, message latency, and out-of-order dispatches for decision-making training in high-friction tactical environments.
+              {t('footer_desc', 'Simulating degraded communication, message latency, and out-of-order dispatches for decision-making training in high-friction tactical environments.')}
             </p>
           </div>
 
           {/* Nav Links Column */}
           <div>
-            <div className="gov-footer-col-title">Navigation</div>
+            <div className="gov-footer-col-title">{t('footer_navigation', 'Navigation')}</div>
             <ul className="gov-footer-links">
-              <li><a href="#home">Home</a></li>
-              <li><a href="#about">About the Platform</a></li>
-              <li><a href="#modules">Training Modules</a></li>
-              <li><a href="#how-it-works">How It Works</a></li>
-              <li><a href="#updates">Updates & Resources</a></li>
+              <li><a href="#home">{t('nav_home', 'Home')}</a></li>
+              <li><a href="#about">{t('nav_about', 'About the Platform')}</a></li>
+              <li><a href="#modules">{t('nav_modules', 'Training Modules')}</a></li>
+              <li><a href="#how-it-works">{t('nav_how_it_works', 'How It Works')}</a></li>
+              <li><a href="#updates">{t('nav_updates', 'Updates & Resources')}</a></li>
             </ul>
           </div>
 
           {/* Platform Workspaces */}
           <div>
-            <div className="gov-footer-col-title">Workspaces</div>
+            <div className="gov-footer-col-title">{t('footer_workspaces', 'Workspaces')}</div>
             <ul className="gov-footer-links">
-              <li><a href="#instructor">Instructor Console</a></li>
-              <li><a href="#participant">Participant Workspace</a></li>
-              <li><a href="#aar">After-Action Review</a></li>
-              <li><a href="#docs">Platform Manual & SOPs</a></li>
+              <li><a href="#instructor">{t('instructor_console', 'Instructor Console')}</a></li>
+              <li><a href="#participant">{t('participant_workspace', 'Participant Workspace')}</a></li>
+              <li><a href="#aar">{t('after_action_review', 'After-Action Review')}</a></li>
+              <li><a href="#docs">{t('training_docs', 'Platform Manual & SOPs')}</a></li>
               <li><a href="#api">API & Scenario Specs</a></li>
             </ul>
           </div>
 
           {/* Contact / Helpdesk Placeholder */}
           <div>
-            <div className="gov-footer-col-title">Helpdesk & Contact</div>
+            <div className="gov-footer-col-title">{t('footer_helpdesk', 'Helpdesk & Contact')}</div>
             <div style={{ fontSize: '13px', color: '#CBD5E1', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Phone size={14} style={{ color: 'var(--color-gold-accent)' }} />
@@ -77,7 +79,7 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
         {/* Bottom Bar */}
         <div className="gov-footer-bottom">
           <div>
-            © {new Date().getFullYear()} Operational Fog Training Platform. Designed for Decision Resilience.
+            © {new Date().getFullYear()} Operational Fog Training Platform. {t('footer_tagline', 'Designed for Decision Resilience.')}
           </div>
           
           <div style={{ display: 'flex', gap: '16px' }}>
@@ -94,3 +96,4 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
     </footer>
   );
 };
+
