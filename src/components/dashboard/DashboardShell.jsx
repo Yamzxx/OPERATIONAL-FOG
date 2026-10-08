@@ -109,7 +109,7 @@ export const DashboardShell = ({
     storageService.addDecision(sessionId, decisionData);
   };
 
-  const handleEndExercise = (session, decisions, durationMinutes, events = [], asymmetryMatrix = [], teamMessages = []) => {
+  const handleEndExercise = (session, decisions, durationMinutes, events = [], asymmetryMatrix = [], teamMessages = [], disruptionsLog = []) => {
     // Update session status
     if (session.sessionCode) {
       multiplayerEngine.endExercise(session.sessionCode);
@@ -134,6 +134,7 @@ export const DashboardShell = ({
       events: events.length > 0 ? events : (activeScenario?.events || []),
       asymmetryMatrix: asymmetryMatrix.length > 0 ? asymmetryMatrix : [],
       teamMessages: teamMessages.length > 0 ? teamMessages : (session.teamMessages || []),
+      disruptions: disruptionsLog.length > 0 ? disruptionsLog : (session.disruptionsLog || []),
       participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
     });
 

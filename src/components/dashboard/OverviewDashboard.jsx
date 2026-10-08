@@ -1,15 +1,12 @@
 import React from 'react';
 import { 
-  Play, 
   ArrowRight, 
-  Clock, 
   Users, 
   LogIn, 
   FileCheck, 
   HelpCircle, 
   BookOpen,
   Radio,
-  Layers,
   CheckCircle,
   AlertCircle
 } from 'lucide-react';
@@ -28,17 +25,6 @@ export const OverviewDashboard = ({
 }) => {
   const userRole = normalizeRole(currentUser?.role || 'team_leader');
   const roleLabel = ROLE_LABELS[userRole] || 'Team Leader';
-
-  // Identify SIH Flagship Demo Scenario
-  const sihScenario = scenarios.find(s => s.code === 'SCEN-SIH-2026' || s.id === 'scen-sih-2026') || scenarios[0];
-
-  const handleLaunchSIH = () => {
-    if (sihScenario && onStartScenario) {
-      onStartScenario(sihScenario);
-    } else {
-      onNavigate('scenarios');
-    }
-  };
 
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -132,78 +118,7 @@ export const OverviewDashboard = ({
         </div>
       </div>
 
-      {/* 3. HERO DEMO LAUNCH CARD (ONE-CLICK LAUNCH) */}
-      <div 
-        style={{
-          backgroundColor: '#0F172A',
-          color: '#FFFFFF',
-          borderRadius: '8px',
-          padding: '28px',
-          boxShadow: '0 4px 12px rgba(15, 23, 42, 0.15)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '24px'
-        }}
-      >
-        <div style={{ flex: '1 1 500px' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: '#D97706', color: '#FFF', fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', marginBottom: '10px' }}>
-            ★ SIH DEMONSTRATION EXERCISE
-          </div>
 
-          <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#FFFFFF', marginBottom: '8px' }}>
-            Multi-Domain Information Asymmetry Exercise
-          </h2>
-
-          <p style={{ fontSize: '13px', color: '#CBD5E1', lineHeight: '1.6', marginBottom: '16px', maxWidth: '620px' }}>
-            A 5-minute simulated operation. One single event is delivered differently to each role: the <strong>Team Leader</strong> gets it with a 20-second delay, the <strong>Land Member</strong> gets it right away, the <strong>Air Member</strong> gets an incomplete radar report, and the <strong>Cyber/EW Member</strong> has their message dropped entirely.
-          </p>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', fontSize: '12px', color: '#94A3B8' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Clock size={14} style={{ color: '#FBBF24' }} />
-              Fast 5-Minute Run
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Users size={14} style={{ color: '#38BDF8' }} />
-              4 Trainee Roles + Instructor
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Layers size={14} style={{ color: '#A78BFA' }} />
-              Live Delivery Comparison
-            </span>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '220px' }}>
-          <button
-            onClick={handleLaunchSIH}
-            style={{
-              backgroundColor: '#F59E0B',
-              color: '#0F172A',
-              border: 'none',
-              padding: '14px 24px',
-              fontSize: '15px',
-              fontWeight: 'bold',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 10px rgba(245, 158, 11, 0.3)',
-              transition: 'transform 0.1s ease'
-            }}
-          >
-            <Play size={18} fill="#0F172A" />
-            <span>Start Demo Exercise</span>
-          </button>
-          <div style={{ fontSize: '11px', color: '#94A3B8', textAlign: 'center' }}>
-            Ready to play • No setup required
-          </div>
-        </div>
-      </div>
 
       {/* 4. EXPLANATION: THE 4 TYPES OF COMMUNICATION BREAKDOWNS (CLEAR & SIMPLE) */}
       <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '20px 24px' }}>
@@ -447,7 +362,7 @@ export const OverviewDashboard = ({
 
         {sessions.length === 0 ? (
           <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', fontSize: '13px' }}>
-            No exercises recorded yet. Click "Start Demo Exercise" above to begin your first run!
+            No exercises recorded yet. Launch an exercise from the Scenario Library or host a Multiplayer room to begin!
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>

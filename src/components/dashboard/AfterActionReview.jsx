@@ -14,9 +14,16 @@ import {
   ShieldAlert,
   HelpCircle,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  Zap
 } from 'lucide-react';
-import { ROLE_LABELS, DOMAINS, formatSecondsToMMSS } from '../../services/eventEngine';
+import { 
+  ROLE_LABELS, 
+  DOMAINS, 
+  TARGET_LABELS,
+  DISRUPTION_TYPE_LABELS,
+  formatSecondsToMMSS 
+} from '../../services/eventEngine';
 import { TimelineReplay } from './TimelineReplay';
 import { generateAARPDFReport } from '../../services/pdfExporter';
 import { useToast } from '../Toast';
@@ -58,6 +65,7 @@ export const AfterActionReview = ({
   const events = selectedAAR?.events || [];
   const asymmetryMatrix = selectedAAR?.asymmetryMatrix || [];
   const teamMessages = selectedAAR?.teamMessages || [];
+  const disruptions = selectedAAR?.disruptions || [];
   const participants = selectedAAR?.participants || [
     { displayName: selectedAAR?.creator || 'Trainee', role: 'team_leader' }
   ];
@@ -215,12 +223,13 @@ export const AfterActionReview = ({
             </div>
 
             {/* Navigation Tabs */}
-            <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #E2E8F0' }}>
+            <div style={{ display: 'flex', gap: '6px', borderBottom: '2px solid #E2E8F0', overflowX: 'auto' }}>
               {[
                 { id: 'summary', label: '📊 Summary & Performance' },
                 { id: 'asymmetry', label: '📡 Information Delivery Matrix' },
                 { id: 'decisions', label: `🎯 Decisions Audit (${decisions.length})` },
                 { id: 'chat', label: `💬 Team Chat Log (${teamMessages.length})` },
+                { id: 'disruptions', label: `⚡ Disruptions (${disruptions.length})` },
                 { id: 'replay', label: '⏱️ Timeline Replay' }
               ].map(tab => (
                 <button
@@ -235,7 +244,8 @@ export const AfterActionReview = ({
                     backgroundColor: activeReportTab === tab.id ? '#EFF6FF' : 'transparent',
                     color: activeReportTab === tab.id ? '#1D4ED8' : '#64748B',
                     cursor: 'pointer',
-                    borderRadius: '4px 4px 0 0'
+                    borderRadius: '4px 4px 0 0',
+                    whiteSpace: 'nowrap'
                   }}
                 >
                   {tab.label}
@@ -247,8 +257,8 @@ export const AfterActionReview = ({
             {activeReportTab === 'summary' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 
-                {/* 4 Stat Metric Cards */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                {/* Stat Metric Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
                   <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '12px' }}>
                     <div style={{ fontSize: '11px', color: '#64748B', fontWeight: 'bold' }}>EXERCISE EVENTS</div>
                     <div style={{ fontSize: '20px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginTop: '2px' }}>
@@ -264,7 +274,7 @@ export const AfterActionReview = ({
                   </div>
 
                   <div style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: '4px', padding: '12px' }}>
-                    <div style={{ fontSize: '11px', color: '#991B1B', fontWeight: 'bold' }}>DROPPED (LOST) MESSAGES</div>
+                    <div style={{ fontSize: '11px', color: '#991B1B', fontWeight: 'bold' }}>DROPPED MESSAGES</div>
                     <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#DC2626', marginTop: '2px' }}>
                       {droppedEventsCount || 3} Blocked
                     </div>
@@ -274,6 +284,13 @@ export const AfterActionReview = ({
                     <div style={{ fontSize: '11px', color: '#166534', fontWeight: 'bold' }}>DECISIONS LOGGED</div>
                     <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#15803D', marginTop: '2px' }}>
                       {decisions.length} Decisions
+                    </div>
+                  </div>
+
+                  <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '4px', padding: '12px' }}>
+                    <div style={{ fontSize: '11px', color: '#1D4ED8', fontWeight: 'bold' }}>INJECTED DISRUPTIONS</div>
+                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#2563EB', marginTop: '2px' }}>
+                      {disruptions.length} Injections
                     </div>
                   </div>
                 </div>
@@ -543,7 +560,72 @@ export const AfterActionReview = ({
               </div>
             )}
 
-            {/* TAB 5: TIMELINE REPLAY */}
+            {/* TAB 5: INJECTED DISRUPTIONS */}
+            {activeReportTab === 'disruptions' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ fontSize: '13px', color: '#475569' }}>
+                  Audited log of live disruptions injected by the Instructor during this exercise session.
+                </div>
+
+                {disruptions.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px' }}>
+                    No instructor disruptions were injected during this exercise session.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '4px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1', textAlign: 'left' }}>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Injected Time</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Target Role</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Disruption Type</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Severity</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Duration</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {disruptions.map((dis, idx) => (
+                          <tr key={dis.id || idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                            <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 'bold', color: '#2563EB' }}>
+                              T+ {formatSecondsToMMSS(dis.injectedAtSec || 0)}
+                            </td>
+                            <td style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                              {dis.targetLabel || TARGET_LABELS[dis.target] || dis.target}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{ fontWeight: 'bold', color: dis.disruptionType === 'restore' ? '#15803D' : '#991B1B' }}>
+                                {dis.typeLabel || DISRUPTION_TYPE_LABELS[dis.disruptionType] || dis.disruptionType}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 12px', textTransform: 'capitalize' }}>
+                              {dis.severity || 'Normal'}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              {dis.duration ? `${dis.duration}s` : 'Immediate'}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 'bold',
+                                padding: '2px 6px',
+                                borderRadius: '3px',
+                                backgroundColor: dis.status === 'Active' ? '#FEE2E2' : dis.status === 'Restored' ? '#DCFCE7' : '#F1F5F9',
+                                color: dis.status === 'Active' ? '#991B1B' : dis.status === 'Restored' ? '#15803D' : '#475569'
+                              }}>
+                                {dis.status || 'Executed'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 6: TIMELINE REPLAY */}
             {activeReportTab === 'replay' && (
               <TimelineReplay aar={selectedAAR} />
             )}

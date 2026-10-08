@@ -33,9 +33,48 @@ export const DOMAINS = {
   JOINT: 'JOINT'
 };
 
+export const DISRUPTION_TARGETS = {
+  ALL: 'all',
+  TEAM_LEADER: 'team_leader',
+  LAND_MEMBER: 'land_member',
+  AIR_MEMBER: 'air_member',
+  CYBER_EW_MEMBER: 'cyber_ew_member'
+};
+
+export const DISRUPTION_TYPES = {
+  DELAY: 'delay',
+  DROPOUT: 'dropout',
+  INCOMPLETE: 'incomplete',
+  CONFLICTING: 'conflicting',
+  RESTORE: 'restore'
+};
+
+export const DISRUPTION_SEVERITIES = {
+  LOW: 'low',
+  MEDIUM: 'medium',
+  HIGH: 'high'
+};
+
+export const TARGET_LABELS = {
+  all: 'Entire Team',
+  team_leader: 'Team Leader',
+  land_member: 'Land Member',
+  air_member: 'Air Member',
+  cyber_ew_member: 'Cyber/EW Member'
+};
+
+export const DISRUPTION_TYPE_LABELS = {
+  delay: 'Delay',
+  dropout: 'Dropout',
+  incomplete: 'Incomplete Information',
+  conflicting: 'Conflicting Information',
+  restore: 'Restore Communication'
+};
+
 export const DELIVERY_BEHAVIORS = {
   NORMAL: 'normal',
   DELAYED: 'delayed',
+  DROPOUT: 'dropped',
   DROPPED: 'dropped',
   CONFLICTING: 'conflicting',
   INCOMPLETE: 'incomplete'
@@ -116,12 +155,81 @@ export function deterministicHash(seed, eventId, role) {
 }
 
 /**
+ * Applies active instructor-injected disruptions to a delivered event.
+ * Modifies delivery behavior, delay amount, content truncation, or drops the message.
+ */
+export function applyDisruptionsToDeliveredEvent(delEv, activeDisruptions = []) {
+  if (!activeDisruptions || !Array.isArray(activeDisruptions) || activeDisruptions.length === 0) {
+    return delEv;
+  }
+
+  const targetRole = delEv.recipientRole;
+  // Match most recent active disruption targeting this role or entire team
+  const disruption = [...activeDisruptions].reverse().find(d => 
+    d.target === 'all' || d.target === targetRole
+  );
+
+  if (!disruption) return delEv;
+
+  const type = (disruption.disruptionType || '').toLowerCase();
+  const severity = (disruption.severity || 'high').toLowerCase();
+
+  const modified = { 
+    ...delEv, 
+    isInjectedDisruption: true, 
+    injectedDisruptionType: type,
+    injectedDisruptionSeverity: severity
+  };
+
+  if (type === 'dropout') {
+    modified.deliveryBehavior = DELIVERY_BEHAVIORS.DROPPED;
+    modified.content = null;
+    modified.confidence = 'N/A';
+    modified.status = DELIVERY_STATUS.DROPPED;
+    modified.deliveredToParticipant = false;
+  } else if (type === 'delay') {
+    let extraSec = 30;
+    if (severity === 'low') extraSec = 15;
+    if (severity === 'medium') extraSec = 30;
+    if (severity === 'high') extraSec = 60;
+
+    modified.deliveryBehavior = DELIVERY_BEHAVIORS.DELAYED;
+    modified.delaySeconds = (modified.delaySeconds || 0) + extraSec;
+    modified.actualDeliveryTimeSec = modified.scheduledTimeSec + modified.delaySeconds;
+  } else if (type === 'incomplete') {
+    modified.deliveryBehavior = DELIVERY_BEHAVIORS.INCOMPLETE;
+    modified.isTruncated = true;
+    if (severity === 'high') {
+      modified.content = '[SIGNAL CORRUPTED - DATA LOSS: INCOMING TELEMETRY UNREADABLE]';
+      modified.confidence = 'Corrupted';
+    } else if (severity === 'medium') {
+      const orig = modified.content || '';
+      modified.content = orig.slice(0, Math.max(15, Math.floor(orig.length * 0.45))) + '... [SIGNAL CUT OFF]';
+      modified.confidence = 'Partial';
+    } else {
+      const orig = modified.content || '';
+      modified.content = orig.slice(0, Math.max(20, Math.floor(orig.length * 0.75))) + '... [RADIO STATIC]';
+      modified.confidence = 'Degraded';
+    }
+  } else if (type === 'conflicting') {
+    modified.deliveryBehavior = DELIVERY_BEHAVIORS.CONFLICTING;
+    modified.isConflicting = true;
+    modified.content = `[ALERT - SENSOR CONFLICT]: ${modified.content || 'Dispatched order unverified.'} (Counter-signal indicates opposite condition)`;
+    modified.confidence = 'Unverified (40%)';
+  }
+
+  return modified;
+}
+
+/**
  * Transforms an authoritative GeneratedEvent (Ground Truth) into a trainee-specific DeliveredEvent.
  */
-export function generateDeliveredEvent(generatedEvent, role, sessionSeed = 'OP_FOG_DEFAULT') {
+export function generateDeliveredEvent(generatedEvent, role, sessionSeed = 'OP_FOG_DEFAULT', activeDisruptions = []) {
   const normRole = normalizeRole(role);
   const scheduledSec = generatedEvent.scheduledTimeSec;
   const domain = generatedEvent.domain || DOMAINS.JOINT;
+
+  let rawDelivered;
 
   // 1. Check for explicit role-specific variation override in the event definition
   const variations = generatedEvent.roleVariations || {};
@@ -134,7 +242,7 @@ export function generateDeliveredEvent(generatedEvent, role, sessionSeed = 'OP_F
       : 0;
     const actualDeliverySec = scheduledSec + delaySec;
 
-    return {
+    rawDelivered = {
       id: generatedEvent.id, // Preserve ID for backwards compatibility
       deliveredId: `${generatedEvent.id}_${normRole}`,
       generatedEventId: generatedEvent.id,
@@ -154,65 +262,68 @@ export function generateDeliveredEvent(generatedEvent, role, sessionSeed = 'OP_F
       deliveredToParticipant: false,
       statusNote: explicitVar.statusNote || ''
     };
+  } else {
+    // 2. Check legacy target role specification
+    const target = (generatedEvent.recipientRole || generatedEvent.intendedRecipient || 'all').toLowerCase();
+    const isTargeted = target === 'all' || 
+                       target === normRole || 
+                       target === role ||
+                       (target === 'commander' && (normRole === TRAINEE_ROLES.TEAM_LEADER || role === 'commander')) ||
+                       (target === 'field_unit' && (normRole === TRAINEE_ROLES.LAND_MEMBER || role === 'field_unit'));
+
+    if (!isTargeted) {
+      // Message not targeted to this role — effectively dropped for this participant
+      rawDelivered = {
+        id: generatedEvent.id,
+        deliveredId: `${generatedEvent.id}_${normRole}`,
+        generatedEventId: generatedEvent.id,
+        recipientRole: normRole,
+        recipientRoleLabel: ROLE_LABELS[normRole] || normRole,
+        domain,
+        title: generatedEvent.title,
+        content: null,
+        confidence: 'N/A',
+        deliveryBehavior: DELIVERY_BEHAVIORS.DROPPED,
+        delaySeconds: 0,
+        scheduledTimeSec: scheduledSec,
+        actualDeliveryTimeSec: scheduledSec,
+        isTruncated: false,
+        isConflicting: false,
+        status: DELIVERY_STATUS.DROPPED,
+        deliveredToParticipant: false,
+        statusNote: 'Filtered by recipient echelon'
+      };
+    } else {
+      // 3. Honor base event delivery behavior directly if defined
+      const behavior = generatedEvent.deliveryBehavior || DELIVERY_BEHAVIORS.NORMAL;
+      const delaySec = behavior === DELIVERY_BEHAVIORS.DELAYED ? (generatedEvent.delaySeconds || 20) : 0;
+      const actualDeliverySec = scheduledSec + delaySec;
+
+      rawDelivered = {
+        id: generatedEvent.id,
+        deliveredId: `${generatedEvent.id}_${normRole}`,
+        generatedEventId: generatedEvent.id,
+        recipientRole: normRole,
+        recipientRoleLabel: ROLE_LABELS[normRole] || normRole,
+        domain,
+        title: generatedEvent.title,
+        content: generatedEvent.content,
+        confidence: generatedEvent.confidence || '80%',
+        deliveryBehavior: behavior,
+        delaySeconds: delaySec,
+        scheduledTimeSec: scheduledSec,
+        actualDeliveryTimeSec: actualDeliverySec,
+        isTruncated: behavior === DELIVERY_BEHAVIORS.INCOMPLETE,
+        isConflicting: behavior === DELIVERY_BEHAVIORS.CONFLICTING,
+        status: DELIVERY_STATUS.PENDING,
+        deliveredToParticipant: false,
+        statusNote: ''
+      };
+    }
   }
 
-  // 2. Check legacy target role specification
-  const target = (generatedEvent.recipientRole || generatedEvent.intendedRecipient || 'all').toLowerCase();
-  const isTargeted = target === 'all' || 
-                     target === normRole || 
-                     target === role ||
-                     (target === 'commander' && (normRole === TRAINEE_ROLES.TEAM_LEADER || role === 'commander')) ||
-                     (target === 'field_unit' && (normRole === TRAINEE_ROLES.LAND_MEMBER || role === 'field_unit'));
-
-  if (!isTargeted) {
-    // Message not targeted to this role — effectively dropped for this participant
-    return {
-      id: generatedEvent.id,
-      deliveredId: `${generatedEvent.id}_${normRole}`,
-      generatedEventId: generatedEvent.id,
-      recipientRole: normRole,
-      recipientRoleLabel: ROLE_LABELS[normRole] || normRole,
-      domain,
-      title: generatedEvent.title,
-      content: null,
-      confidence: 'N/A',
-      deliveryBehavior: DELIVERY_BEHAVIORS.DROPPED,
-      delaySeconds: 0,
-      scheduledTimeSec: scheduledSec,
-      actualDeliveryTimeSec: scheduledSec,
-      isTruncated: false,
-      isConflicting: false,
-      status: DELIVERY_STATUS.DROPPED,
-      deliveredToParticipant: false,
-      statusNote: 'Filtered by recipient echelon'
-    };
-  }
-
-  // 3. Honor base event delivery behavior directly if defined
-  const behavior = generatedEvent.deliveryBehavior || DELIVERY_BEHAVIORS.NORMAL;
-  const delaySec = behavior === DELIVERY_BEHAVIORS.DELAYED ? (generatedEvent.delaySeconds || 20) : 0;
-  const actualDeliverySec = scheduledSec + delaySec;
-
-  return {
-    id: generatedEvent.id,
-    deliveredId: `${generatedEvent.id}_${normRole}`,
-    generatedEventId: generatedEvent.id,
-    recipientRole: normRole,
-    recipientRoleLabel: ROLE_LABELS[normRole] || normRole,
-    domain,
-    title: generatedEvent.title,
-    content: generatedEvent.content,
-    confidence: generatedEvent.confidence || '80%',
-    deliveryBehavior: behavior,
-    delaySeconds: delaySec,
-    scheduledTimeSec: scheduledSec,
-    actualDeliveryTimeSec: actualDeliverySec,
-    isTruncated: behavior === DELIVERY_BEHAVIORS.INCOMPLETE,
-    isConflicting: behavior === DELIVERY_BEHAVIORS.CONFLICTING,
-    status: DELIVERY_STATUS.PENDING,
-    deliveredToParticipant: false,
-    statusNote: ''
-  };
+  // Apply any active instructor disruptions
+  return applyDisruptionsToDeliveredEvent(rawDelivered, activeDisruptions);
 }
 
 /**
@@ -261,22 +372,109 @@ export class EventEngine {
       };
     }).sort((a, b) => a.scheduledTimeSec - b.scheduledTimeSec);
 
+    this.activeDisruptions = options.initialDisruptions || [];
+    this.disruptionsLog = options.initialDisruptionsLog || [];
+
     // 2. Trainee DeliveredEvents Map: role -> DeliveredEvent[]
     this.deliveredEventsByRole = new Map();
+    this.rebuildDeliveredEvents();
 
+    // Legacy events accessor compatibility
+    this.events = this.generatedEvents;
+  }
+
+  rebuildDeliveredEvents() {
     for (const role of this.traineeRoles) {
       const deliveredList = this.generatedEvents.map(genEv => 
-        generateDeliveredEvent(genEv, role, this.sessionSeed)
+        generateDeliveredEvent(genEv, role, this.sessionSeed, this.activeDisruptions)
       );
       this.deliveredEventsByRole.set(role, deliveredList);
     }
 
     // Also support legacy role strings for backward compatibility tests
-    this.deliveredEventsByRole.set('commander', this.generatedEvents.map(genEv => generateDeliveredEvent(genEv, 'commander', this.sessionSeed)));
-    this.deliveredEventsByRole.set('field_unit', this.generatedEvents.map(genEv => generateDeliveredEvent(genEv, 'field_unit', this.sessionSeed)));
+    this.deliveredEventsByRole.set('commander', this.generatedEvents.map(genEv => generateDeliveredEvent(genEv, 'commander', this.sessionSeed, this.activeDisruptions)));
+    this.deliveredEventsByRole.set('field_unit', this.generatedEvents.map(genEv => generateDeliveredEvent(genEv, 'field_unit', this.sessionSeed, this.activeDisruptions)));
+  }
 
-    // Legacy events accessor compatibility
-    this.events = this.generatedEvents;
+  injectDisruption({ target, disruptionType, severity, duration }) {
+    const t = target || 'all';
+    const type = (disruptionType || 'delay').toLowerCase();
+    const sev = (severity || 'high').toLowerCase();
+    const dur = parseInt(duration, 10) || 60;
+
+    if (type === 'restore' || type === 'restore communication') {
+      return this.clearDisruption(t);
+    }
+
+    const disruption = {
+      id: `disrupt-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      target: t,
+      targetLabel: TARGET_LABELS[t] || t,
+      disruptionType: type,
+      typeLabel: DISRUPTION_TYPE_LABELS[type] || type,
+      severity: sev,
+      duration: dur,
+      remainingSec: dur,
+      injectedAt: new Date().toISOString(),
+      injectedAtSec: this.elapsedSeconds,
+      status: 'Active'
+    };
+
+    this.activeDisruptions = this.activeDisruptions.filter(d => d.target !== t);
+    this.activeDisruptions.push(disruption);
+    this.disruptionsLog.push({ ...disruption });
+
+    this.rebuildDeliveredEvents();
+    this.evaluateEvents();
+    this.notify();
+
+    return disruption;
+  }
+
+  clearDisruption(target = 'all') {
+    if (target === 'all') {
+      this.activeDisruptions = [];
+    } else {
+      this.activeDisruptions = this.activeDisruptions.filter(d => d.target !== target);
+    }
+
+    this.disruptionsLog.push({
+      id: `restored-${Date.now()}`,
+      target,
+      targetLabel: TARGET_LABELS[target] || target,
+      disruptionType: 'restore',
+      typeLabel: 'Restore Communication',
+      severity: 'normal',
+      duration: 0,
+      remainingSec: 0,
+      injectedAt: new Date().toISOString(),
+      injectedAtSec: this.elapsedSeconds,
+      status: 'Restored'
+    });
+
+    this.rebuildDeliveredEvents();
+    this.evaluateEvents();
+    this.notify();
+  }
+
+  setActiveDisruptions(list = []) {
+    this.activeDisruptions = Array.isArray(list) ? [...list] : [];
+    this.rebuildDeliveredEvents();
+    this.evaluateEvents();
+    this.notify();
+  }
+
+  setDisruptionsLog(list = []) {
+    this.disruptionsLog = Array.isArray(list) ? [...list] : [];
+    this.notify();
+  }
+
+  getActiveDisruptions() {
+    return [...this.activeDisruptions];
+  }
+
+  getDisruptionsLog() {
+    return [...this.disruptionsLog];
   }
 
   subscribe(listener) {
@@ -312,6 +510,30 @@ export class EventEngine {
   tick(seconds = 1) {
     if (!this.isRunning || this.isPaused) return;
     this.elapsedSeconds += seconds;
+
+    // Automatic countdown and duration expiry restoration
+    if (this.activeDisruptions && this.activeDisruptions.length > 0) {
+      let expired = false;
+      const remaining = [];
+      for (const dis of this.activeDisruptions) {
+        dis.remainingSec = Math.max(0, dis.remainingSec - seconds);
+        if (dis.remainingSec <= 0) {
+          expired = true;
+          const logItem = this.disruptionsLog.find(l => l.id === dis.id);
+          if (logItem) {
+            logItem.status = 'Expired (Restored)';
+            logItem.expiredAtSec = this.elapsedSeconds;
+          }
+        } else {
+          remaining.push(dis);
+        }
+      }
+      if (expired) {
+        this.activeDisruptions = remaining;
+        this.rebuildDeliveredEvents();
+      }
+    }
+
     this.evaluateEvents();
     this.notify();
   }
@@ -455,22 +677,26 @@ export class EventEngine {
           statusText = `T-${formatSecondsToMMSS(delEv.scheduledTimeSec - this.elapsedSeconds)}`;
         } else if (delEv.deliveryBehavior === DELIVERY_BEHAVIORS.DROPPED) {
           statusKey = 'dropped';
-          statusText = 'Dropped';
+          statusText = delEv.isInjectedDisruption ? 'Dropped [Injected]' : 'Dropped';
         } else if (delEv.deliveryBehavior === DELIVERY_BEHAVIORS.DELAYED) {
           if (this.elapsedSeconds >= delEv.actualDeliveryTimeSec) {
             statusKey = 'delivered';
-            statusText = `Delivered (+${delEv.delaySeconds}s)`;
+            statusText = delEv.isInjectedDisruption 
+              ? `Delivered (+${delEv.delaySeconds}s) [Injected]` 
+              : `Delivered (+${delEv.delaySeconds}s)`;
           } else {
             statusKey = 'delayed';
             const remaining = delEv.actualDeliveryTimeSec - this.elapsedSeconds;
-            statusText = `Delayed (${remaining}s left)`;
+            statusText = delEv.isInjectedDisruption 
+              ? `Delayed (${remaining}s left) [Injected]` 
+              : `Delayed (${remaining}s left)`;
           }
         } else if (delEv.deliveryBehavior === DELIVERY_BEHAVIORS.INCOMPLETE) {
           statusKey = 'partial';
-          statusText = 'Partial';
+          statusText = delEv.isInjectedDisruption ? 'Partial [Injected]' : 'Partial';
         } else if (delEv.deliveryBehavior === DELIVERY_BEHAVIORS.CONFLICTING) {
           statusKey = 'conflicting';
-          statusText = 'Conflicting';
+          statusText = delEv.isInjectedDisruption ? 'Conflicting [Injected]' : 'Conflicting';
         } else {
           statusKey = 'delivered';
           statusText = 'Delivered';
@@ -484,7 +710,9 @@ export class EventEngine {
           deliveredContent: delEv.content,
           confidence: delEv.confidence,
           isTruncated: delEv.isTruncated,
-          isConflicting: delEv.isConflicting
+          isConflicting: delEv.isConflicting,
+          isInjected: !!delEv.isInjectedDisruption,
+          injectedType: delEv.injectedDisruptionType || null
         };
       }
 
@@ -523,7 +751,9 @@ export class EventEngine {
       occurredEventsCount: this.generatedEvents.filter(e => e.status === DELIVERY_STATUS.DELIVERED).length,
       deliveredCount: totalDelivered,
       delayedCount: totalDelayed,
-      droppedCount: totalDropped
+      droppedCount: totalDropped,
+      activeDisruptions: [...this.activeDisruptions],
+      disruptionsLog: [...this.disruptionsLog]
     };
   }
 }

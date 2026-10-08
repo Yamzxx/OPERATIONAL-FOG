@@ -2,7 +2,12 @@
  * Operational Fog - PDF Report Exporter
  * Generates an official, printable PDF document report for After-Action Reviews.
  */
-import { ROLE_LABELS } from './eventEngine';
+import { 
+  ROLE_LABELS, 
+  TARGET_LABELS, 
+  DISRUPTION_TYPE_LABELS, 
+  formatSecondsToMMSS 
+} from './eventEngine';
 
 export function generateAARPDFReport(aar) {
   if (!aar) return;
@@ -15,6 +20,7 @@ export function generateAARPDFReport(aar) {
   const decisions = aar.decisions || [];
   const events = aar.events || [];
   const teamMessages = aar.teamMessages || [];
+  const disruptions = aar.disruptions || [];
   const instructorNotes = aar.instructorNotes || 'No qualitative instructor observations recorded.';
 
   // Construct styled printable HTML content
@@ -174,8 +180,37 @@ export function generateAARPDFReport(aar) {
         </table>
       ` : ''}
 
-      <!-- SECTION 4: INSTRUCTOR NOTES -->
-      <div class="section-title">4. Instructor Observations & Assessment</div>
+      <!-- SECTION 4: INJECTED DISRUPTIONS LOG -->
+      ${disruptions.length > 0 ? `
+        <div class="section-title">4. Instructor Injected Disruptions Log (${disruptions.length})</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Target</th>
+              <th>Disruption Type</th>
+              <th>Severity</th>
+              <th>Duration</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${disruptions.map(d => `
+              <tr>
+                <td>T+ ${formatSecondsToMMSS(d.injectedAtSec || 0)}</td>
+                <td><strong>${d.targetLabel || TARGET_LABELS[d.target] || d.target}</strong></td>
+                <td>${d.typeLabel || DISRUPTION_TYPE_LABELS[d.disruptionType] || d.disruptionType}</td>
+                <td style="text-transform: capitalize;">${d.severity || 'Normal'}</td>
+                <td>${d.duration ? `${d.duration}s` : 'Immediate'}</td>
+                <td>${d.status || 'Executed'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : ''}
+
+      <!-- SECTION 5: INSTRUCTOR NOTES -->
+      <div class="section-title">${disruptions.length > 0 ? '5' : '4'}. Instructor Observations & Assessment</div>
       <div class="notes-box">
         ${instructorNotes}
       </div>

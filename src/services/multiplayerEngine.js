@@ -402,6 +402,165 @@ class MultiplayerEngine {
     this.broadcast('PARTICIPANT_LEFT', { sessionCode, serviceId });
     return session;
   }
+
+  // Real-Time WebSocket Session Room Connection
+  initWebSocket(sessionCode, role = 'team_leader', userInfo = {}) {
+    if (typeof window === 'undefined' || typeof WebSocket === 'undefined') return;
+    if (this.ws && this.currentWsCode === sessionCode && this.ws.readyState === WebSocket.OPEN) return;
+
+    this.currentWsCode = sessionCode;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname || 'localhost';
+    const wsUrl = `${protocol}//${host}:4000/ws`;
+
+    try {
+      this.ws = new WebSocket(wsUrl);
+
+      this.ws.onopen = () => {
+        this.ws.send(JSON.stringify({
+          type: 'JOIN_ROOM',
+          payload: {
+            sessionCode,
+            role,
+            userId: userInfo?.id || userInfo?.serviceId || 'user-anon',
+            displayName: userInfo?.displayName || 'Operator'
+          }
+        }));
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'DISRUPTION_UPDATED' || msg.type === 'DISRUPTION_EXPIRED' || msg.type === 'DISRUPTION_TICK' || msg.type === 'ROOM_SYNC') {
+            const code = msg.payload?.sessionCode || sessionCode;
+            const session = this.getSessionByCode(code);
+            if (session) {
+              if (msg.payload?.activeDisruptions !== undefined) {
+                session.activeDisruptions = msg.payload.activeDisruptions;
+              }
+              if (msg.payload?.disruptionsLog !== undefined) {
+                session.disruptionsLog = msg.payload.disruptionsLog;
+              }
+              this.updateSession(session);
+            }
+          }
+          this.notifyListeners(msg);
+        } catch (e) {}
+      };
+
+      this.ws.onclose = () => {
+        // Will reconnect on subsequent interaction or room join
+      };
+    } catch (e) {
+      // WS unsupported or server not reachable
+    }
+  }
+
+  // Inject disruption into active exercise session
+  injectDisruption(sessionCode, disruptionData = {}) {
+    const code = (sessionCode || 'DEFAULT').toUpperCase();
+    let session = this.getSessionByCode(code);
+    if (!session) {
+      session = {
+        id: code,
+        sessionCode: code,
+        name: 'Live Training Exercise',
+        activeDisruptions: [],
+        disruptionsLog: []
+      };
+    }
+
+    const { target = 'all', disruptionType = 'delay', severity = 'high', duration = 60 } = disruptionData;
+    const durNum = parseInt(duration, 10) || 60;
+
+    const newDisruption = {
+      id: `inj-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      sessionCode: code,
+      target,
+      disruptionType,
+      severity,
+      duration: durNum,
+      remainingSec: durNum,
+      injectedAt: new Date().toISOString(),
+      status: 'Active'
+    };
+
+    // Update session locally for 0ms latency
+    session.activeDisruptions = (session.activeDisruptions || []).filter(d => d.target !== target);
+    session.activeDisruptions.push(newDisruption);
+    session.disruptionsLog = [...(session.disruptionsLog || []), newDisruption];
+    this.updateSession(session);
+
+    // Send via WebSocket if connected
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'INJECT_DISRUPTION',
+        payload: { sessionCode: code, target, disruptionType, severity, duration: durNum }
+      }));
+    }
+
+    // Also push via REST API fallback
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(code)}/disruptions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target, disruptionType, severity, duration: durNum })
+      }).catch(() => {});
+    }
+
+    this.broadcast('DISRUPTION_UPDATED', {
+      sessionCode: code,
+      activeDisruptions: session.activeDisruptions,
+      disruptionsLog: session.disruptionsLog,
+      latestInjection: newDisruption
+    });
+
+    return newDisruption;
+  }
+
+  clearDisruption(sessionCode, target = 'all') {
+    const code = (sessionCode || 'DEFAULT').toUpperCase();
+    const session = this.getSessionByCode(code);
+    if (session) {
+      if (target === 'all') {
+        session.activeDisruptions = [];
+      } else {
+        session.activeDisruptions = (session.activeDisruptions || []).filter(d => d.target !== target);
+      }
+      this.updateSession(session);
+    }
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'CLEAR_DISRUPTION',
+        payload: { sessionCode: code, target }
+      }));
+    }
+
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(code)}/disruptions/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target })
+      }).catch(() => {});
+    }
+
+    this.broadcast('DISRUPTION_UPDATED', {
+      sessionCode: code,
+      activeDisruptions: session?.activeDisruptions || [],
+      disruptionsLog: session?.disruptionsLog || []
+    });
+  }
+
+  getActiveDisruptions(sessionCode) {
+    const session = this.getSessionByCode(sessionCode);
+    return session?.activeDisruptions || [];
+  }
+
+  getDisruptionsLog(sessionCode) {
+    const session = this.getSessionByCode(sessionCode);
+    return session?.disruptionsLog || [];
+  }
 }
 
 export const multiplayerEngine = new MultiplayerEngine();

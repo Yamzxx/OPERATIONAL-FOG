@@ -17,13 +17,17 @@ import {
   Wifi,
   Activity,
   ShieldAlert,
-  Info
+  Info,
+  Zap,
+  RefreshCw
 } from 'lucide-react';
 import { 
   EventEngine, 
   DOMAINS,
   TRAINEE_ROLES,
   ROLE_LABELS,
+  TARGET_LABELS,
+  DISRUPTION_TYPE_LABELS,
   normalizeRole,
   formatSecondsToMMSS 
 } from '../../services/eventEngine';
@@ -51,7 +55,9 @@ export const TrainingRoom = ({
     isPaused: false,
     deliveredCount: 0,
     delayedCount: 0,
-    droppedCount: 0
+    droppedCount: 0,
+    activeDisruptions: [],
+    disruptionsLog: []
   });
 
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
@@ -68,7 +74,19 @@ export const TrainingRoom = ({
   const [decisions, setDecisions] = useState(existingDecisions);
   const [liveSession, setLiveSession] = useState(session);
 
+  // Instructor Live Disruption Control form state
+  const [disruptionTarget, setDisruptionTarget] = useState('all');
+  const [disruptionType, setDisruptionType] = useState('delay');
+  const [disruptionSeverity, setDisruptionSeverity] = useState('high');
+  const [disruptionDuration, setDisruptionDuration] = useState('60');
+
   const engineRef = useRef(null);
+
+  // Initialize WebSocket connection for server-side room communication
+  useEffect(() => {
+    const code = session?.sessionCode || session?.id || 'ALPHA-ROOM';
+    multiplayerEngine.initWebSocket(code, userRole, currentUser);
+  }, [session, userRole, currentUser]);
 
   // Subscribe to real-time multiplayer updates
   useEffect(() => {
@@ -105,6 +123,15 @@ export const TrainingRoom = ({
             teamMessages: [...(prev?.teamMessages || []), event.payload.message]
           };
         });
+      }
+      // Real-time Disruption Synchronization across clients & WebSocket rooms
+      if (event?.type === 'DISRUPTION_UPDATED' || event?.type === 'DISRUPTION_EXPIRED' || event?.type === 'DISRUPTION_TICK' || event?.type === 'ROOM_SYNC') {
+        if (event?.payload?.activeDisruptions !== undefined && engineRef.current) {
+          engineRef.current.setActiveDisruptions(event.payload.activeDisruptions);
+        }
+        if (event?.payload?.disruptionsLog !== undefined && engineRef.current) {
+          engineRef.current.setDisruptionsLog(event.payload.disruptionsLog);
+        }
       }
     });
 
@@ -220,6 +247,42 @@ export const TrainingRoom = ({
     });
   };
 
+  const handleInjectDisruption = (e) => {
+    if (e) e.preventDefault();
+    const sessionCode = liveSession?.sessionCode || session?.sessionCode || liveSession?.id || session?.id || 'ALPHA-ROOM';
+    const durNum = parseInt(disruptionDuration, 10) || 60;
+
+    // 1. Immediate local engine injection (0ms latency)
+    engineRef.current?.injectDisruption({
+      target: disruptionTarget,
+      disruptionType,
+      severity: disruptionSeverity,
+      duration: durNum
+    });
+
+    // 2. Broadcast across WebSocket room & REST fallback
+    multiplayerEngine.injectDisruption(sessionCode, {
+      target: disruptionTarget,
+      disruptionType,
+      severity: disruptionSeverity,
+      duration: durNum
+    });
+
+    showToast(
+      disruptionType === 'restore'
+        ? `Communication restored for ${TARGET_LABELS[disruptionTarget] || disruptionTarget}.`
+        : `Disruption injected: ${DISRUPTION_TYPE_LABELS[disruptionType] || disruptionType} on ${TARGET_LABELS[disruptionTarget] || disruptionTarget} (${durNum}s).`,
+      disruptionType === 'restore' ? 'success' : 'warning'
+    );
+  };
+
+  const handleRestoreCommunication = (target = 'all') => {
+    const sessionCode = liveSession?.sessionCode || session?.sessionCode || liveSession?.id || session?.id || 'ALPHA-ROOM';
+    engineRef.current?.clearDisruption(target);
+    multiplayerEngine.clearDisruption(sessionCode, target);
+    showToast(`Restored communications (${TARGET_LABELS[target] || target}).`, 'success');
+  };
+
   // Trainee messages for active view
   const currentViewRole = isInstructor && activeTab === 'participant' ? previewRole : userRole;
   const participantMessages = engineRef.current ? engineRef.current.getParticipantMessages(currentViewRole) : [];
@@ -258,6 +321,13 @@ export const TrainingRoom = ({
       default:
         return { background: '#F1F5F9', color: '#64748B', border: '1px solid #E2E8F0' };
     }
+  };
+
+  // Helper to check if a specific participant role is currently under active disruption
+  const isRoleDegraded = (role) => {
+    return (engineState.activeDisruptions || []).some(
+      d => d.target === 'all' || d.target === role
+    );
   };
 
   return (
@@ -745,6 +815,180 @@ export const TrainingRoom = ({
             </div>
           </div>
 
+          {/* LIVE INSTRUCTOR DISRUPTION CONTROL PANEL */}
+          <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #CBD5E1', borderRadius: '6px', padding: '16px 20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Zap size={18} color="#D97706" />
+                <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0, letterSpacing: '0.5px' }}>
+                  LIVE DISRUPTION CONTROL
+                </h3>
+              </div>
+              {engineState.activeDisruptions && engineState.activeDisruptions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleRestoreCommunication('all')}
+                  className="gov-btn"
+                  style={{ fontSize: '11px', padding: '4px 10px', backgroundColor: '#F1F5F9', color: '#166534', border: '1px solid #86EFAC', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
+                >
+                  <RefreshCw size={12} />
+                  <span>Restore All</span>
+                </button>
+              )}
+            </div>
+
+            {/* Simple Form Layout */}
+            <form onSubmit={handleInjectDisruption} style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '160px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>
+                  Target:
+                </label>
+                <select
+                  className="gov-form-input"
+                  value={disruptionTarget}
+                  onChange={(e) => setDisruptionTarget(e.target.value)}
+                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '4px' }}
+                >
+                  <option value="all">Entire Team</option>
+                  <option value="team_leader">Team Leader</option>
+                  <option value="land_member">Land</option>
+                  <option value="air_member">Air</option>
+                  <option value="cyber_ew_member">Cyber-EW</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '170px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>
+                  Type:
+                </label>
+                <select
+                  className="gov-form-input"
+                  value={disruptionType}
+                  onChange={(e) => setDisruptionType(e.target.value)}
+                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '4px' }}
+                >
+                  <option value="delay">Delay</option>
+                  <option value="dropout">Dropout</option>
+                  <option value="incomplete">Incomplete Information</option>
+                  <option value="conflicting">Conflicting Information</option>
+                  <option value="restore">Restore Communication</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '120px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>
+                  Severity:
+                </label>
+                <select
+                  className="gov-form-input"
+                  value={disruptionSeverity}
+                  onChange={(e) => setDisruptionSeverity(e.target.value)}
+                  disabled={disruptionType === 'restore'}
+                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '4px', opacity: disruptionType === 'restore' ? 0.5 : 1 }}
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '120px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>
+                  Duration:
+                </label>
+                <select
+                  className="gov-form-input"
+                  value={disruptionDuration}
+                  onChange={(e) => setDisruptionDuration(e.target.value)}
+                  disabled={disruptionType === 'restore'}
+                  style={{ fontSize: '13px', padding: '7px 10px', borderRadius: '4px', opacity: disruptionType === 'restore' ? 0.5 : 1 }}
+                >
+                  <option value="30">30 sec</option>
+                  <option value="60">60 sec</option>
+                  <option value="120">120 sec</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <button
+                  type="submit"
+                  className="gov-btn gov-btn-primary"
+                  style={{ 
+                    padding: '8px 22px', 
+                    fontSize: '13px', 
+                    fontWeight: 'bold', 
+                    backgroundColor: disruptionType === 'restore' ? '#15803D' : '#DC2626', 
+                    color: '#FFFFFF', 
+                    border: 'none', 
+                    borderRadius: '4px', 
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '6px' 
+                  }}
+                >
+                  <Zap size={14} />
+                  <span>{disruptionType === 'restore' ? 'Restore Communication' : 'Inject Disruption'}</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Active countdown display */}
+            <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px dashed #CBD5E1' }}>
+              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#334155', marginBottom: '6px' }}>
+                Active:
+              </div>
+              {engineState.activeDisruptions && engineState.activeDisruptions.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {engineState.activeDisruptions.map((dis) => {
+                    const typeLabel = dis.typeLabel || DISRUPTION_TYPE_LABELS[dis.disruptionType] || dis.disruptionType;
+                    const targetLabel = dis.targetLabel || TARGET_LABELS[dis.target] || dis.target;
+                    return (
+                      <div
+                        key={dis.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 12px',
+                          backgroundColor: '#FEF2F2',
+                          border: '1px solid #FECACA',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          color: '#991B1B'
+                        }}
+                      >
+                        <span style={{ fontWeight: '600' }}>
+                          {typeLabel} → {targetLabel} → {dis.remainingSec} sec remaining
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreCommunication(dis.target)}
+                          style={{
+                            fontSize: '11px',
+                            background: '#FFFFFF',
+                            border: '1px solid #FCA5A5',
+                            color: '#B91C1C',
+                            padding: '2px 8px',
+                            borderRadius: '3px',
+                            cursor: 'pointer',
+                            fontWeight: 'bold'
+                          }}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ fontSize: '12px', color: '#64748B', fontStyle: 'italic' }}>
+                  None (Normal Communications)
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* THE INFORMATION ASYMMETRY TABLE */}
           <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', overflow: 'hidden' }}>
             <div style={{ padding: '12px 20px', borderBottom: '1px solid #E2E8F0', backgroundColor: '#F8FAFC', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -763,10 +1007,30 @@ export const TrainingRoom = ({
                     <th style={{ padding: '12px 16px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Event Name</th>
                     <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Domain</th>
                     <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Time</th>
-                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Team Leader</th>
-                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Land Member</th>
-                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Air Member</th>
-                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Cyber/EW</th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                      Team Leader
+                      {isRoleDegraded('team_leader') && (
+                        <span style={{ fontSize: '10px', background: '#FEE2E2', color: '#991B1B', padding: '1px 5px', borderRadius: '3px', marginLeft: '5px' }}>⚡ Degraded</span>
+                      )}
+                    </th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                      Land Member
+                      {isRoleDegraded('land_member') && (
+                        <span style={{ fontSize: '10px', background: '#FEE2E2', color: '#991B1B', padding: '1px 5px', borderRadius: '3px', marginLeft: '5px' }}>⚡ Degraded</span>
+                      )}
+                    </th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                      Air Member
+                      {isRoleDegraded('air_member') && (
+                        <span style={{ fontSize: '10px', background: '#FEE2E2', color: '#991B1B', padding: '1px 5px', borderRadius: '3px', marginLeft: '5px' }}>⚡ Degraded</span>
+                      )}
+                    </th>
+                    <th style={{ padding: '12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                      Cyber/EW
+                      {isRoleDegraded('cyber_ew_member') && (
+                        <span style={{ fontSize: '10px', background: '#FEE2E2', color: '#991B1B', padding: '1px 5px', borderRadius: '3px', marginLeft: '5px' }}>⚡ Degraded</span>
+                      )}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -812,6 +1076,9 @@ export const TrainingRoom = ({
                             <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', ...getStatusBadgeStyle(leaderStatus?.statusKey) }}>
                               {leaderStatus?.statusText || 'Pending'}
                             </span>
+                            {leaderStatus?.isInjected && (
+                              <span style={{ fontSize: '9px', background: '#DC2626', color: '#FFF', padding: '1px 4px', borderRadius: '2px', marginLeft: '4px', verticalAlign: 'middle', fontWeight: 'bold' }}>⚡ Injected</span>
+                            )}
                           </td>
 
                           {/* Land */}
@@ -819,6 +1086,9 @@ export const TrainingRoom = ({
                             <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', ...getStatusBadgeStyle(landStatus?.statusKey) }}>
                               {landStatus?.statusText || 'Pending'}
                             </span>
+                            {landStatus?.isInjected && (
+                              <span style={{ fontSize: '9px', background: '#DC2626', color: '#FFF', padding: '1px 4px', borderRadius: '2px', marginLeft: '4px', verticalAlign: 'middle', fontWeight: 'bold' }}>⚡ Injected</span>
+                            )}
                           </td>
 
                           {/* Air */}
@@ -826,6 +1096,9 @@ export const TrainingRoom = ({
                             <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', ...getStatusBadgeStyle(airStatus?.statusKey) }}>
                               {airStatus?.statusText || 'Pending'}
                             </span>
+                            {airStatus?.isInjected && (
+                              <span style={{ fontSize: '9px', background: '#DC2626', color: '#FFF', padding: '1px 4px', borderRadius: '2px', marginLeft: '4px', verticalAlign: 'middle', fontWeight: 'bold' }}>⚡ Injected</span>
+                            )}
                           </td>
 
                           {/* Cyber/EW */}
@@ -833,6 +1106,9 @@ export const TrainingRoom = ({
                             <span style={{ fontSize: '11px', fontWeight: 'bold', padding: '3px 8px', borderRadius: '4px', ...getStatusBadgeStyle(cyberStatus?.statusKey) }}>
                               {cyberStatus?.statusText || 'Pending'}
                             </span>
+                            {cyberStatus?.isInjected && (
+                              <span style={{ fontSize: '9px', background: '#DC2626', color: '#FFF', padding: '1px 4px', borderRadius: '2px', marginLeft: '4px', verticalAlign: 'middle', fontWeight: 'bold' }}>⚡ Injected</span>
+                            )}
                           </td>
                         </tr>
 
@@ -932,6 +1208,77 @@ export const TrainingRoom = ({
             </div>
           </div>
 
+          {/* INJECTED DISRUPTIONS TIMELINE & AUDIT LOG */}
+          <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Zap size={16} color="#2563EB" />
+                <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                  Instructor Injected Disruptions Timeline ({engineState.disruptionsLog?.length || 0})
+                </h3>
+              </div>
+              <span style={{ fontSize: '12px', color: '#64748B' }}>
+                Recorded for After-Action Debrief & AAR Replay
+              </span>
+            </div>
+
+            {(!engineState.disruptionsLog || engineState.disruptionsLog.length === 0) ? (
+              <div style={{ padding: '16px', textAlign: 'center', color: '#64748B', fontSize: '13px', backgroundColor: '#F8FAFC', borderRadius: '4px' }}>
+                No instructor disruptions injected yet in this session.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1', textAlign: 'left' }}>
+                      <th style={{ padding: '8px 10px' }}>Injected Time</th>
+                      <th style={{ padding: '8px 10px' }}>Target</th>
+                      <th style={{ padding: '8px 10px' }}>Disruption Type</th>
+                      <th style={{ padding: '8px 10px' }}>Severity</th>
+                      <th style={{ padding: '8px 10px' }}>Duration</th>
+                      <th style={{ padding: '8px 10px' }}>Current Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {engineState.disruptionsLog.map((log, idx) => (
+                      <tr key={log.id || idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                        <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontWeight: 'bold', color: '#2563EB' }}>
+                          T+ {formatSecondsToMMSS(log.injectedAtSec || 0)}
+                        </td>
+                        <td style={{ padding: '8px 10px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                          {log.targetLabel || TARGET_LABELS[log.target] || log.target}
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          <span style={{ fontWeight: 'bold', color: log.disruptionType === 'restore' ? '#15803D' : '#991B1B' }}>
+                            {log.typeLabel || DISRUPTION_TYPE_LABELS[log.disruptionType] || log.disruptionType}
+                          </span>
+                        </td>
+                        <td style={{ padding: '8px 10px', textTransform: 'capitalize' }}>
+                          {log.severity || 'Normal'}
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          {log.duration ? `${log.duration}s` : 'Immediate'}
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          <span style={{
+                            fontSize: '11px',
+                            fontWeight: 'bold',
+                            padding: '2px 6px',
+                            borderRadius: '3px',
+                            backgroundColor: log.status === 'Active' ? '#FEE2E2' : log.status === 'Restored' ? '#DCFCE7' : '#F1F5F9',
+                            color: log.status === 'Active' ? '#991B1B' : log.status === 'Restored' ? '#15803D' : '#475569'
+                          }}>
+                            {log.status || 'Active'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           {/* Participant Submitted Decisions Audit List */}
           <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '20px' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '12px' }}>
@@ -1023,7 +1370,8 @@ export const TrainingRoom = ({
                       Math.ceil(engineState.elapsedSeconds / 60), 
                       groundTruthEvents,
                       asymmetryMatrix,
-                      liveSession?.teamMessages || session?.teamMessages || []
+                      liveSession?.teamMessages || session?.teamMessages || [],
+                      engineRef.current?.getDisruptionsLog() || liveSession?.disruptionsLog || []
                     );
                   }}
                 >

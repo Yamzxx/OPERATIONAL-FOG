@@ -1,3 +1,4 @@
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
@@ -10,11 +11,16 @@ import {
   generateAsymmetryMatrix,
   DELIVERY_STATUS 
 } from './services/simulationEngine.js';
+import { initWebSocketServer, wsManager } from './services/websocketServer.js';
 
 const { Pool } = pg;
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
+
+// Initialize WebSocket room manager
+initWebSocketServer(server);
 
 app.use(cors());
 app.use(express.json());
@@ -617,6 +623,48 @@ app.post(['/api/exercises/:id/team-messages', '/api/exercises/code/:id/team-mess
 });
 
 // -------------------------------------------------------------
+// LIVE INSTRUCTOR DISRUPTION INJECTION & CONTROL
+// -------------------------------------------------------------
+app.get(['/api/exercises/:id/disruptions', '/api/exercises/code/:id/disruptions'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const active = wsManager.getActiveDisruptions(codeOrId);
+    const log = wsManager.getDisruptionsLog(codeOrId);
+    res.json({ activeDisruptions: active, disruptionsLog: log });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch disruptions', details: err.message });
+  }
+});
+
+app.post(['/api/exercises/:id/disruptions', '/api/exercises/code/:id/disruptions'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const { target, disruptionType, severity, duration } = req.body;
+    const result = wsManager.injectDisruption(codeOrId, {
+      target,
+      disruptionType,
+      severity,
+      duration,
+      injectedBy: req.user?.serviceId || 'instructor'
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to inject disruption', details: err.message });
+  }
+});
+
+app.post(['/api/exercises/:id/disruptions/clear', '/api/exercises/code/:id/disruptions/clear'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const { target } = req.body;
+    const result = wsManager.clearDisruption(codeOrId, target || 'all');
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clear disruption', details: err.message });
+  }
+});
+
+// -------------------------------------------------------------
 // 6. AFTER-ACTION REVIEW (AAR) AUDIT REPORTS
 // -------------------------------------------------------------
 app.get('/api/aars', async (req, res) => {
@@ -715,9 +763,10 @@ async function startServer() {
     }
   }
 
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`Operational Fog Backend API running on port ${PORT}`);
     console.log(`Health Check Endpoint: http://localhost:${PORT}/api/health`);
+    console.log(`WebSocket Endpoint: ws://localhost:${PORT}/ws`);
   });
 }
 
