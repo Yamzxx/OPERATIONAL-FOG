@@ -84,6 +84,30 @@ const DEFAULT_SCENARIOS = [
         }
       },
       {
+        id: 'sih-ev-dp-1',
+        time: '01:00',
+        title: 'DECISION REQUIRED: Convoy Movement Directive',
+        domain: 'JOINT',
+        type: 'decision',
+        requiresDecision: true,
+        targetRole: 'team_leader',
+        deadlineSeconds: 90,
+        confidence: '80%',
+        decisionPrompt: 'Air radar reports unidentified drones while signals intercept warns of radar decoys. Satellite radio is jammed and Convoy Bravo is halted at Mile 44. As Team Leader, synthesize your squad reports and issue movement directive:',
+        decisionOptions: [
+          'Request Verification & hold Convoy Bravo in cover',
+          'Advance Convoy Bravo immediately along Route Alpha',
+          'Dispatch Land scout team for immediate visual check',
+          'Reroute entire squad through alternate mountain corridor'
+        ],
+        content: 'TACTICAL DECISION REQUIRED: Review received field reports from Land, Air, and Cyber/EW and issue the convoy movement directive.',
+        instructorNotes: 'Ground Truth: Real surveillance drones approaching, but enemy jammer active on Hill 52. Team Leader has only received delayed scout report and missing air telemetry.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'TACTICAL DECISION POINT: Evaluate your received intelligence and issue the Convoy Bravo movement directive.' },
+          instructor: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Trainees prompted for Tactical Decision Point #1 (Convoy Movement Order).' }
+        }
+      },
+      {
         id: 'sih-ev-4',
         time: '01:15',
         title: 'Supply Convoy Bravo Status',
@@ -237,6 +261,14 @@ export async function migrate() {
     await client.query(`
       ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS elapsed_seconds INTEGER DEFAULT 0;
     `).catch(err => console.log('Note: participant_decisions.elapsed_seconds already present:', err.message));
+
+    await client.query(`
+      ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS evidence_snapshot_json JSONB DEFAULT '{}'::jsonb;
+    `).catch(err => console.log('Note: participant_decisions.evidence_snapshot_json already present:', err.message));
+
+    await client.query(`
+      ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS sources_used_json JSONB DEFAULT '[]'::jsonb;
+    `).catch(err => console.log('Note: participant_decisions.sources_used_json already present:', err.message));
 
     console.log('Column migrations applied.');
 

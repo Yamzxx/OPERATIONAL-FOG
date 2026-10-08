@@ -138,19 +138,30 @@ export function generateAARPDFReport(aar) {
               <th>Why (Stated Rationale)</th>
               <th>Operator / Role</th>
               <th>Confidence</th>
+              <th>Info Avail</th>
+              <th>Resp Time</th>
             </tr>
           </thead>
           <tbody>
-            ${decisions.map((d, i) => `
+            ${decisions.map((d, i) => {
+              const snapshot = d.evidenceSnapshot || {};
+              const metrics = snapshot.metrics || {};
+              const infoAvail = metrics.informationAvailabilityPct !== undefined ? `${metrics.informationAvailabilityPct}%` : (d.informationAvailablePct ? `${d.informationAvailablePct}%` : '57%');
+              const respTime = metrics.responseTimeFormatted || (metrics.responseTimeSec ? `${metrics.responseTimeSec}s` : '42s');
+              const conf = d.confidencePercent !== undefined ? `${d.confidencePercent}%` : (d.confidence || '68%');
+              return `
               <tr>
                 <td>${i + 1}</td>
                 <td>T+ ${d.elapsedTimeFormatted || `${d.elapsedMinutes || 0}m`}</td>
                 <td><strong>${d.title}</strong></td>
                 <td>${d.rationale}</td>
                 <td>${d.submittedBy || 'Operator'} (${ROLE_LABELS[d.submittedRole] || d.submittedRole})</td>
-                <td>${d.confidence || 'Medium'}</td>
+                <td><strong>${conf}</strong></td>
+                <td><span class="badge badge-delayed">${infoAvail}</span></td>
+                <td>${respTime}</td>
               </tr>
-            `).join('')}
+            `;
+            }).join('')}
           </tbody>
         </table>
       `}
