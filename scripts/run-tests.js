@@ -4,7 +4,8 @@ const testFiles = [
   'src/services/eventEngine.test.js',
   'src/services/multiplayerEngine.test.js',
   'src/services/storageService.test.js',
-  'backend/tests/api.test.js'
+  'backend/tests/api.test.js',
+  'backend/tests/websocketSync.test.js'
 ];
 
 console.log('=== Operational Fog Full Test Suite Runner ===\n');

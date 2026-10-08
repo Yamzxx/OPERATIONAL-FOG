@@ -176,7 +176,7 @@ export const DashboardShell = ({
     storageService.addDecision(sessionId, decisionData);
   };
 
-  const handleEndExercise = async (session, decisions, durationMinutes, events = []) => {
+  const handleEndExercise = async (session, decisions, durationMinutes, events = [], asymmetryMatrix = [], teamMessages = [], disruptionsLog = []) => {
     // Clear the persisted active session on exercise completion
     sessionStorage.removeItem(ACTIVE_SESSION_KEY);
 
@@ -188,15 +188,33 @@ export const DashboardShell = ({
     }
     setSessions(multiplayerEngine.getSessions());
 
+    // Save comprehensive local AAR record
+    storageService.saveAAR({
+      sessionId: session.id,
+      exerciseId: session.id,
+      sessionCode: session.sessionCode || session.id,
+      sessionName: session.name,
+      scenarioTitle: session.scenarioTitle,
+      creator: session.creator || currentUser?.serviceId,
+      startTime: session.createdAt,
+      endTime: new Date().toISOString(),
+      durationMinutes,
+      decisionsCount: decisions.length,
+      decisions,
+      events: events.length > 0 ? events : (activeScenario?.events || []),
+      asymmetryMatrix: asymmetryMatrix.length > 0 ? asymmetryMatrix : [],
+      teamMessages: teamMessages.length > 0 ? teamMessages : (session.teamMessages || []),
+      disruptions: disruptionsLog.length > 0 ? disruptionsLog : (session.disruptionsLog || []),
+      participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
+    });
+
     const apiBase = (
       typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
         ? import.meta.env.VITE_BACKEND_URL
         : 'http://localhost:4000'
     ) + '/api';
 
-    // Primary path: call the authoritative AAR generation endpoint.
-    // GET /api/aars/exercise/:exerciseId reads participant_decisions +
-    // communication_events from PostgreSQL and upserts a complete AAR record.
+    // Primary path: call the authoritative AAR generation endpoint if available
     let liveAAR = null;
     if (session.id) {
       try {
@@ -208,30 +226,18 @@ export const DashboardShell = ({
     }
 
     if (liveAAR) {
-      // Backend returned an authoritative AAR — cache it locally so the AAR panel
-      // loads instantly even if the backend is slow on the next visit.
+      const mergedAAR = {
+        ...liveAAR,
+        asymmetryMatrix: asymmetryMatrix.length > 0 ? asymmetryMatrix : (liveAAR.asymmetryMatrix || []),
+        teamMessages: teamMessages.length > 0 ? teamMessages : (liveAAR.teamMessages || []),
+        disruptions: disruptionsLog.length > 0 ? disruptionsLog : (liveAAR.disruptions || [])
+      };
       const existing = storageService.getAARs();
       const withoutStale = existing.filter(a => a.id !== liveAAR.id && a.exerciseId !== session.id);
-      const cached = [liveAAR, ...withoutStale];
+      const cached = [mergedAAR, ...withoutStale];
       try { localStorage.setItem('op_fog_aars_v1', JSON.stringify(cached)); } catch (_) {}
       setAARS(cached);
     } else {
-      // Fallback: build AAR from in-memory data when backend is unreachable
-      storageService.saveAAR({
-        sessionId: session.id,
-        exerciseId: session.id,
-        sessionCode: session.sessionCode || session.id,
-        sessionName: session.name,
-        scenarioTitle: session.scenarioTitle,
-        creator: session.creator || currentUser?.serviceId,
-        startTime: session.createdAt,
-        endTime: new Date().toISOString(),
-        durationMinutes,
-        decisionsCount: decisions.length,
-        decisions,
-        events,
-        participants: session.participants || [{ displayName: currentUser?.serviceId, role: currentUser?.role }]
-      });
       setAARS(storageService.getAARs());
     }
 
@@ -285,6 +291,7 @@ export const DashboardShell = ({
         onSignOut={onSignOut}
         collapsed={collapsed}
         setCollapsed={setCollapsed}
+        hasActiveTraining={!!activeTrainingSession}
       />
 
       {/* Main Content Area */}
@@ -305,6 +312,9 @@ export const DashboardShell = ({
               scenarios={scenarios}
               sessions={sessions}
               aars={aars}
+              currentUser={currentUser}
+              activeTrainingSession={activeTrainingSession}
+              onStartScenario={handleStartScenario}
               onNavigate={(view) => setActiveView(view)}
               onOpenCreateScenario={() => {
                 setScenarioToEdit(null);

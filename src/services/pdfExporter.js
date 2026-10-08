@@ -2,6 +2,12 @@
  * Operational Fog - PDF Report Exporter
  * Generates an official, printable PDF document report for After-Action Reviews.
  */
+import { 
+  ROLE_LABELS, 
+  TARGET_LABELS, 
+  DISRUPTION_TYPE_LABELS, 
+  formatSecondsToMMSS 
+} from './eventEngine';
 
 export function generateAARPDFReport(aar) {
   if (!aar) return;
@@ -13,6 +19,8 @@ export function generateAARPDFReport(aar) {
 
   const decisions = aar.decisions || [];
   const events = aar.events || [];
+  const teamMessages = aar.teamMessages || [];
+  const disruptions = aar.disruptions || [];
   const instructorNotes = aar.instructorNotes || 'No qualitative instructor observations recorded.';
 
   // Construct styled printable HTML content
@@ -23,34 +31,36 @@ export function generateAARPDFReport(aar) {
       <meta charset="UTF-8">
       <title>OPERATIONAL FOG — AAR REPORT ${sessionCode}</title>
       <style>
-        @page { size: A4; margin: 20mm; }
-        body { font-family: 'Georgia', 'Merriweather', serif; color: #1A1D20; line-height: 1.5; margin: 0; padding: 20px; font-size: 13px; }
-        .header-bar { border-bottom: 3px solid #8B261D; padding-bottom: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end; }
-        .org-title { font-size: 10px; font-weight: bold; text-transform: uppercase; color: #8B261D; letter-spacing: 1px; }
-        .main-title { font-size: 24px; font-weight: bold; color: #0F2C59; margin: 4px 0; }
-        .sub-title { font-size: 12px; color: #4A5568; }
-        .meta-box { background-color: #F4F6F8; border: 1px solid #CBD5E1; padding: 14px; margin-bottom: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .meta-item { font-size: 12px; }
-        .meta-label { font-size: 10px; font-weight: bold; color: #64748B; text-transform: uppercase; }
-        .meta-val { font-size: 14px; font-weight: bold; color: #0F2C59; }
-        .section-title { font-size: 16px; font-weight: bold; color: #0F2C59; border-bottom: 2px solid #0F2C59; padding-bottom: 4px; margin-top: 24px; margin-bottom: 12px; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; }
-        th, td { border: 1px solid #CBD5E1; padding: 8px 10px; text-align: left; }
-        th { background-color: #F8FAFC; color: #0F2C59; font-weight: bold; }
-        .badge { display: inline-block; padding: 2px 6px; font-size: 9px; font-weight: bold; border-radius: 2px; }
+        @page { size: A4; margin: 15mm; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B; line-height: 1.5; margin: 0; padding: 20px; font-size: 12px; }
+        .header-bar { border-bottom: 3px solid #2563EB; padding-bottom: 12px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-end; }
+        .org-title { font-size: 10px; font-weight: bold; text-transform: uppercase; color: #2563EB; letter-spacing: 1px; }
+        .main-title { font-size: 22px; font-weight: bold; color: #0F172A; margin: 4px 0; }
+        .sub-title { font-size: 13px; color: #475569; }
+        .meta-box { background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 4px; padding: 12px; margin-bottom: 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        .meta-item { font-size: 11px; }
+        .meta-label { font-size: 9px; font-weight: bold; color: #64748B; text-transform: uppercase; }
+        .meta-val { font-size: 13px; font-weight: bold; color: #0F172A; margin-top: 2px; }
+        .section-title { font-size: 14px; font-weight: bold; color: #0F172A; border-bottom: 2px solid #CBD5E1; padding-bottom: 4px; margin-top: 20px; margin-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 11px; }
+        th, td { border: 1px solid #CBD5E1; padding: 6px 8px; text-align: left; }
+        th { background-color: #F1F5F9; color: #0F172A; font-weight: bold; }
+        .badge { display: inline-block; padding: 2px 5px; font-size: 9px; font-weight: bold; border-radius: 2px; }
         .badge-delivered { background-color: #DCFCE7; color: #15803D; }
         .badge-delayed { background-color: #FEF3C7; color: #B45309; }
         .badge-dropped { background-color: #FEE2E2; color: #991B1B; }
-        .notes-box { background-color: #FFFBEB; border: 1px solid #FCD34D; border-left: 4px solid #D97706; padding: 14px; margin-top: 16px; font-size: 12px; }
-        .footer { margin-top: 40px; border-top: 1px solid #CBD5E1; padding-top: 10px; font-size: 10px; color: #64748B; text-align: center; }
+        .badge-incomplete { background-color: #F3E8FF; color: #7E22CE; }
+        .badge-conflicting { background-color: #FFEDD5; color: #C2410C; }
+        .notes-box { background-color: #F8FAFC; border: 1px solid #CBD5E1; border-left: 4px solid #2563EB; border-radius: 4px; padding: 12px; margin-top: 10px; font-size: 12px; }
+        .footer { margin-top: 30px; border-top: 1px solid #CBD5E1; padding-top: 8px; font-size: 9px; color: #64748B; text-align: center; }
       </style>
     </head>
     <body>
       <div class="header-bar">
         <div>
-          <div class="org-title">Government Style Training Prototype • Official Audit Report</div>
-          <div class="main-title">OPERATIONAL FOG — AFTER-ACTION REVIEW</div>
-          <div class="sub-title">${title} (${sessionCode})</div>
+          <div class="org-title">Operational Fog Simulator • After-Action Evaluation Report</div>
+          <div class="main-title">${title}</div>
+          <div class="sub-title">Scenario: ${scenarioTitle} • Room Code: <strong>${sessionCode}</strong></div>
         </div>
         <div style="text-align: right; font-size: 10px; color: #64748B;">
           Report Generated:<br><strong>${genDate}</strong>
@@ -59,33 +69,75 @@ export function generateAARPDFReport(aar) {
 
       <div class="meta-box">
         <div class="meta-item">
-          <div class="meta-label">Scenario Name & Code</div>
+          <div class="meta-label">Scenario</div>
           <div class="meta-val">${scenarioTitle}</div>
         </div>
         <div class="meta-item">
-          <div class="meta-label">Exercise Duration</div>
-          <div class="meta-val">${aar.durationMinutes || 45} Minutes</div>
+          <div class="meta-label">Duration</div>
+          <div class="meta-val">${aar.durationMinutes || 5} Mins</div>
         </div>
         <div class="meta-item">
-          <div class="meta-label">Start Time</div>
-          <div class="meta-val">${new Date(aar.startTime).toLocaleString()}</div>
+          <div class="meta-label">Decisions Logged</div>
+          <div class="meta-val">${decisions.length} Actions</div>
         </div>
         <div class="meta-item">
-          <div class="meta-label">Total Decisions Logged</div>
-          <div class="meta-val">${decisions.length} Command Actions</div>
+          <div class="meta-label">Team Chat Msgs</div>
+          <div class="meta-val">${teamMessages.length} Messages</div>
         </div>
       </div>
 
-      <div class="section-title">1. Chronological Command Decisions & Rationales</div>
-      ${decisions.length === 0 ? '<p>No decisions logged during this exercise.</p>' : `
+      <!-- SECTION 1: INFORMATION ASYMMETRY DELIVERY MATRIX -->
+      <div class="section-title">1. Information Asymmetry Delivery Matrix</div>
+      <p style="font-size: 10px; color: #64748B; margin: 0 0 8px;">
+        Demonstrates what the system created (Ground Truth) vs what each trainee role actually received.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Event Title</th>
+            <th>Time</th>
+            <th>Ground Truth Reality</th>
+            <th>Team Leader</th>
+            <th>Land Member</th>
+            <th>Air Member</th>
+            <th>Cyber/EW</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${events.map(ev => {
+            const v = ev.roleVariations || {};
+            const ldr = v.team_leader?.deliveryBehavior || ev.deliveryBehavior || 'normal';
+            const land = v.land_member?.deliveryBehavior || ev.deliveryBehavior || 'normal';
+            const air = v.air_member?.deliveryBehavior || ev.deliveryBehavior || 'normal';
+            const cyber = v.cyber_ew_member?.deliveryBehavior || ev.deliveryBehavior || 'normal';
+
+            return `
+              <tr>
+                <td><strong>${ev.title}</strong></td>
+                <td>${ev.time || '00:00'}</td>
+                <td style="max-width: 180px;">${ev.content}</td>
+                <td><span class="badge badge-${ldr}">${ldr === 'delayed' ? 'Delayed (+20s)' : ldr}</span></td>
+                <td><span class="badge badge-${land}">${land === 'normal' ? 'Delivered' : land}</span></td>
+                <td><span class="badge badge-${air}">${air === 'incomplete' ? 'Incomplete' : air}</span></td>
+                <td><span class="badge badge-${cyber}">${cyber === 'dropped' ? 'Dropped (Lost)' : cyber}</span></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+
+      <!-- SECTION 2: COMMAND DECISIONS AUDIT -->
+      <div class="section-title">2. Command Decisions & Tactical Rationales</div>
+      ${decisions.length === 0 ? '<p style="color: #64748B;">No decisions recorded during this exercise.</p>' : `
         <table>
           <thead>
             <tr>
               <th>#</th>
               <th>Time</th>
-              <th>Decision Action</th>
-              <th>Tactical Rationale & Assumptions</th>
+              <th>Action Decided</th>
+              <th>Why (Stated Rationale)</th>
               <th>Operator / Role</th>
+              <th>Confidence</th>
             </tr>
           </thead>
           <tbody>
@@ -95,21 +147,76 @@ export function generateAARPDFReport(aar) {
                 <td>T+ ${d.elapsedTimeFormatted || `${d.elapsedMinutes || 0}m`}</td>
                 <td><strong>${d.title}</strong></td>
                 <td>${d.rationale}</td>
-                <td>${d.submittedBy || 'Operator'} (${d.submittedRole || 'Commander'})</td>
+                <td>${d.submittedBy || 'Operator'} (${ROLE_LABELS[d.submittedRole] || d.submittedRole})</td>
+                <td>${d.confidence || 'Medium'}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
       `}
 
-      <div class="section-title">2. Instructor Qualitative Observations</div>
+      <!-- SECTION 3: TEAM CHAT TRANSCRIPT -->
+      ${teamMessages.length > 0 ? `
+        <div class="section-title">3. Team Coordination Chat Transcript</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Sender</th>
+              <th>Role</th>
+              <th>Message Content</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${teamMessages.map(m => `
+              <tr>
+                <td style="white-space: nowrap;">${m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</td>
+                <td><strong>${m.senderName}</strong></td>
+                <td>${ROLE_LABELS[m.senderRole] || m.senderRole}</td>
+                <td>${m.text}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : ''}
+
+      <!-- SECTION 4: INJECTED DISRUPTIONS LOG -->
+      ${disruptions.length > 0 ? `
+        <div class="section-title">4. Instructor Injected Disruptions Log (${disruptions.length})</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Target</th>
+              <th>Disruption Type</th>
+              <th>Severity</th>
+              <th>Duration</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${disruptions.map(d => `
+              <tr>
+                <td>T+ ${formatSecondsToMMSS(d.injectedAtSec || 0)}</td>
+                <td><strong>${d.targetLabel || TARGET_LABELS[d.target] || d.target}</strong></td>
+                <td>${d.typeLabel || DISRUPTION_TYPE_LABELS[d.disruptionType] || d.disruptionType}</td>
+                <td style="text-transform: capitalize;">${d.severity || 'Normal'}</td>
+                <td>${d.duration ? `${d.duration}s` : 'Immediate'}</td>
+                <td>${d.status || 'Executed'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : ''}
+
+      <!-- SECTION 5: INSTRUCTOR NOTES -->
+      <div class="section-title">${disruptions.length > 0 ? '5' : '4'}. Instructor Observations & Assessment</div>
       <div class="notes-box">
-        <strong>Debrief Observations:</strong><br>
         ${instructorNotes}
       </div>
 
       <div class="footer">
-        Operational Fog Decision-Making Training Platform • Independent Prototype • Report Ref: ${sessionCode}
+        Operational Fog Decision-Making Training Platform • SIH Multi-Domain Prototype • Session Ref: ${sessionCode}
       </div>
     </body>
     </html>
