@@ -4,6 +4,12 @@
  * Supports multi-participant sessions, role targeting, team chat, and synchronized exercise clocks.
  */
 
+import { 
+  normalizeRole, 
+  getDecisionTargetRoles, 
+  isRoleAllowedForDecision 
+} from './eventEngine.js';
+
 const MULTIPLAYER_STORAGE_KEY = 'op_fog_mp_sessions_v1';
 const CHANNEL_NAME = 'op_fog_multiplayer_channel';
 
@@ -358,6 +364,18 @@ class MultiplayerEngine {
   submitDecision(sessionCode, decisionData) {
     const session = this.getSessionByCode(sessionCode);
     if (!session) return null;
+
+    const submittedRole = normalizeRole(decisionData?.submittedRole || 'team_leader');
+    const targetRoles = getDecisionTargetRoles(decisionData);
+    if (targetRoles.length > 0 && !targetRoles.includes('all')) {
+      const isAllowed = submittedRole === 'instructor' || targetRoles.includes(submittedRole);
+      if (!isAllowed) {
+        return {
+          error: `Forbidden: Role "${submittedRole}" is not authorized to submit this decision. Permitted role(s): ${targetRoles.join(', ')}`,
+          rejected: true
+        };
+      }
+    }
 
     const newDecision = {
       id: `dec-${Date.now()}`,

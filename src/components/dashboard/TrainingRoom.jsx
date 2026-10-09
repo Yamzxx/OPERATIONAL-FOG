@@ -29,7 +29,18 @@ import {
   TARGET_LABELS,
   DISRUPTION_TYPE_LABELS,
   normalizeRole,
+<<<<<<< Updated upstream
   formatSecondsToMMSS 
+=======
+  formatSecondsToMMSS,
+  parseTimeToSeconds,
+  isDecisionEvent,
+  calculateInformationAvailability,
+  calculateSharedAwareness,
+  createEvidenceSnapshot,
+  getDecisionTargetRoles,
+  isRoleAllowedForDecision
+>>>>>>> Stashed changes
 } from '../../services/eventEngine';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 import { TeamCoordinationPanel } from './TeamCoordinationPanel';
@@ -191,6 +202,7 @@ export const TrainingRoom = ({
     }
   };
 
+<<<<<<< Updated upstream
   const handleDecisionSubmit = (e) => {
     e.preventDefault();
     if (!decisionTitle.trim() || !rationale.trim()) return;
@@ -200,6 +212,102 @@ export const TrainingRoom = ({
       title: decisionTitle.trim(),
       rationale: rationale.trim(),
       confidence,
+=======
+  // Scenario-triggered decision point detection
+  const scenarioEvents = activeScenario?.events || [];
+  const triggeredDecisionPoints = scenarioEvents.filter(ev => {
+    if (!isDecisionEvent(ev)) return false;
+    const triggerSec = parseTimeToSeconds(ev.time || ev.scheduledTime || 0);
+    return triggerSec <= engineState.elapsedSeconds;
+  });
+
+  // Find the first triggered decision point not yet submitted
+  const activeDecisionPoint = triggeredDecisionPoints.find(dp => {
+    return !decisions.some(d => (d.decisionPointId === dp.id) || (d.title === dp.title));
+  });
+
+  const currentViewRole = isInstructor && activeTab === 'participant' ? previewRole : userRole;
+
+  // Next or active decision point to determine role access
+  const relevantDecisionPoint = activeDecisionPoint || scenarioEvents.find(isDecisionEvent);
+
+  const isTargetForDecision = relevantDecisionPoint
+    ? isRoleAllowedForDecision(relevantDecisionPoint, currentViewRole)
+    : (currentViewRole === TRAINEE_ROLES.TEAM_LEADER);
+
+  const decisionTargetRoles = relevantDecisionPoint 
+    ? getDecisionTargetRoles(relevantDecisionPoint) 
+    : ['team_leader'];
+
+  const targetRoleLabels = decisionTargetRoles.map(r => ROLE_LABELS[normalizeRole(r)] || r).join(' / ');
+  const awaitingMessage = decisionTargetRoles.includes('team_leader')
+    ? "Awaiting Team Leader Decision — share your domain updates through Team Chat."
+    : `Awaiting ${targetRoleLabels} Decision — share your domain updates through Team Chat.`;
+
+  const participantMessages = engineRef.current 
+    ? engineRef.current.getParticipantMessages(currentViewRole) 
+    : [];
+
+  const handleDecisionSubmit = (e) => {
+    e.preventDefault();
+    if (!isTargetForDecision) {
+      showToast('You are not authorized to submit this decision.', 'error');
+      return;
+    }
+    const finalTitle = (selectedOption && selectedOption !== '__custom__')
+      ? selectedOption
+      : decisionTitle.trim();
+
+    if (!finalTitle || !rationale.trim()) return;
+
+    const triggerSec = activeDecisionPoint 
+      ? parseTimeToSeconds(activeDecisionPoint.time || activeDecisionPoint.scheduledTime || 0)
+      : engineState.elapsedSeconds;
+
+    const evidenceSnapshot = engineRef.current ? engineRef.current.createEvidenceSnapshot({
+      decidingRole: userRole,
+      decidingParticipantId: currentUser?.serviceId || 'Leader-01',
+      decisionText: finalTitle,
+      confidence: `${confidencePercent}%`,
+      rationale: rationale.trim(),
+      sourcesUsed: selectedSources,
+      teamMessages: liveSession?.teamMessages || session?.teamMessages || [],
+      decisionTriggerTimeSec: triggerSec
+    }) : {
+      participantId: currentUser?.serviceId || 'Leader-01',
+      participantRole: userRole,
+      decisionTimestamp: new Date().toISOString(),
+      elapsedSeconds: engineState.elapsedSeconds,
+      elapsedTimeFormatted: engineState.elapsedFormatted,
+      decision: finalTitle,
+      confidence: `${confidencePercent}%`,
+      confidenceNum: confidencePercent,
+      rationale: rationale.trim(),
+      sourcesUsed: selectedSources,
+      eventsAvailable: participantMessages,
+      eventsDelayedOrDropped: [],
+      communicationState: { isDegraded: false, activeDisruptionsCount: 0, disruptions: [] },
+      teamMessagesAvailable: liveSession?.teamMessages || session?.teamMessages || [],
+      activeDisruptions: engineState.activeDisruptions || [],
+      metrics: {
+        responseTimeSec: Math.max(0, engineState.elapsedSeconds - triggerSec),
+        responseTimeFormatted: `${Math.max(0, engineState.elapsedSeconds - triggerSec)}s`,
+        informationAvailabilityPct: 57,
+        confidenceNum: confidencePercent,
+        confidenceVsAvailabilityDelta: confidencePercent - 57,
+        sharedAwarenessPct: 62
+      }
+    };
+
+    const newDecision = {
+      id: `dec-${Date.now()}`,
+      decisionPointId: activeDecisionPoint?.id || relevantDecisionPoint?.id || null,
+      targetRoles: decisionTargetRoles,
+      title: finalTitle,
+      rationale: rationale.trim(),
+      confidence: `${confidencePercent}%`,
+      confidencePercent,
+>>>>>>> Stashed changes
       timestamp: new Date().toISOString(),
       elapsedMinutes: Math.floor(engineState.elapsedSeconds / 60),
       elapsedTimeFormatted: engineState.elapsedFormatted,
@@ -670,6 +778,7 @@ export const TrainingRoom = ({
               onSendTeamMessage={handleSendTeamMessage}
             />
 
+<<<<<<< Updated upstream
             {/* Decision Submission Box */}
             <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '18px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -696,6 +805,99 @@ export const TrainingRoom = ({
                     style={{ fontSize: '13px' }}
                   />
                 </div>
+=======
+            {/* Decision Submission Box & Structured Decision Point */}
+            <div 
+              id="decision-console-panel"
+              style={{ 
+                backgroundColor: '#FFF', 
+                border: activeDecisionPoint && isTargetForDecision ? '2px solid #2563EB' : '1px solid #E2E8F0', 
+                borderRadius: '6px', 
+                padding: '18px', 
+                boxShadow: activeDecisionPoint && isTargetForDecision ? '0 0 0 3px rgba(37,99,235,0.1)' : 'none' 
+              }}
+            >
+              {!isTargetForDecision ? (
+                /* Non-targeted role: Form hidden, awaiting directive notice shown */
+                <div 
+                  id="awaiting-decision-notice"
+                  style={{ 
+                    backgroundColor: '#FEF3C7', 
+                    border: '1px solid #FCD34D', 
+                    borderRadius: '6px', 
+                    padding: '16px 18px', 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    gap: '8px' 
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#92400E', fontWeight: 'bold', fontSize: '13px' }}>
+                    <Clock size={16} />
+                    <span>{activeDecisionPoint ? `Decision Required: ${activeDecisionPoint.title}` : 'Tactical Command Status'}</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '13px', color: '#78350F', lineHeight: '1.4', fontWeight: '500' }}>
+                    {awaitingMessage}
+                  </p>
+                  {activeDecisionPoint && (
+                    <div style={{ fontSize: '12px', color: '#92400E', background: '#FFFBEB', padding: '8px 10px', borderRadius: '4px', border: '1px solid #FDE68A', marginTop: '4px' }}>
+                      <strong>Directive Prompt:</strong> {activeDecisionPoint.decisionPrompt || activeDecisionPoint.content}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Targeted role (e.g. Team Leader): Show Decision Required / Command form */
+                <>
+                  {activeDecisionPoint ? (
+                    <div style={{ marginBottom: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ backgroundColor: '#DC2626', color: '#FFF', fontSize: '11px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            ⚡ DECISION REQUIRED
+                          </span>
+                          <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 'bold' }}>
+                            Triggered T+{activeDecisionPoint.time}
+                          </span>
+                        </div>
+                        {activeDecisionPoint.deadlineSeconds && (
+                          <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', padding: '2px 8px', borderRadius: '4px' }}>
+                            ⏱️ Deadline: {Math.max(0, (parseTimeToSeconds(activeDecisionPoint.time) + activeDecisionPoint.deadlineSeconds) - engineState.elapsedSeconds)}s remaining
+                          </div>
+                        )}
+                      </div>
+
+                      <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '0 0 6px' }}>
+                        {activeDecisionPoint.title}
+                      </h3>
+                      <p style={{ fontSize: '13px', color: '#334155', margin: 0, lineHeight: '1.4', background: '#F8FAFC', padding: '10px 12px', borderRadius: '4px', borderLeft: '3px solid #2563EB' }}>
+                        {activeDecisionPoint.decisionPrompt || activeDecisionPoint.content}
+                      </p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <div>
+                        <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                          Record Command Decision
+                        </h3>
+                        <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                          Document what action you decide to take based on the information you have.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleDecisionSubmit}>
+                  {/* Step 1: Information Sources Used (checkboxes of received messages) */}
+                  <div style={{ marginBottom: '12px', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#1E293B', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <FileText size={13} color="#2563EB" />
+                        <span>Information Sources Used (Evidence Check):</span>
+                      </label>
+                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                        {selectedSources.length} selected of {participantMessages.length} received
+                      </span>
+                    </div>
+>>>>>>> Stashed changes
 
                 <div className="gov-form-group" style={{ marginBottom: '10px' }}>
                   <label className="gov-form-label" style={{ fontSize: '12px' }}>Why? (Reason / Explanation)</label>
@@ -724,6 +926,7 @@ export const TrainingRoom = ({
                       <option value="Low">Low Confidence (High Uncertainty)</option>
                     </select>
                   </div>
+<<<<<<< Updated upstream
 
                   <button 
                     type="submit" 
@@ -747,6 +950,12 @@ export const TrainingRoom = ({
                 </div>
               </form>
             </div>
+=======
+                </form>
+              </>
+            )}
+          </div>
+>>>>>>> Stashed changes
 
             {/* Past Decisions Recorded List */}
             <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '16px', flexGrow: 1 }}>

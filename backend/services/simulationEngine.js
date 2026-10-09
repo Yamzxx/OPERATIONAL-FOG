@@ -523,3 +523,225 @@ export function generateAsymmetryMatrix(eventsList, elapsedSeconds = 0, sessionS
 export function filterParticipantMessages(evaluatedEvents, userRole = 'all') {
   return evaluateParticipantDeliveredEvents(evaluatedEvents, userRole, 99999);
 }
+<<<<<<< Updated upstream
+=======
+
+/**
+ * Checks if an event is a structured Decision Point.
+ */
+export function isDecisionEvent(ev) {
+  if (!ev) return false;
+  const t = (ev.type || ev.eventType || ev.event_type || '').toUpperCase();
+  return (
+    ev.requiresDecision === true ||
+    ev.isDecisionPoint === true ||
+    t === 'DECISION' ||
+    t === 'DECISION_REQUIRED' ||
+    t === 'DECISION_POINT'
+  );
+}
+
+/**
+ * Resolves target roles array from a decision event / decision point.
+ * Checks ev.targetRoles (array) or falls back to ev.targetRole (string) or ev.intendedRecipient.
+ */
+export function getDecisionTargetRoles(ev) {
+  if (!ev) return [];
+  if (Array.isArray(ev.targetRoles) && ev.targetRoles.length > 0) {
+    return ev.targetRoles.map(r => normalizeRole(r));
+  }
+  if (ev.targetRole) {
+    return [normalizeRole(ev.targetRole)];
+  }
+  if (ev.intendedRecipient) {
+    return [normalizeRole(ev.intendedRecipient)];
+  }
+  return [];
+}
+
+/**
+ * Checks if a specific role is allowed to submit / view decision form for a decision point.
+ * Returns true if:
+ * - targetRoles includes 'all'
+ * - targetRoles is empty (unrestricted)
+ * - targetRoles includes normalized user role
+ * - user is instructor (instructors can preview/supervise)
+ */
+export function isRoleAllowedForDecision(ev, role) {
+  if (!ev) return false;
+  const normRole = normalizeRole(role);
+  if (normRole === TRAINEE_ROLES.INSTRUCTOR) return true;
+  const targets = getDecisionTargetRoles(ev);
+  if (targets.length === 0 || targets.includes('all')) return true;
+  return targets.includes(normRole);
+}
+
+/**
+ * Calculates the percentage of scheduled information actually available to a trainee role up to elapsedSeconds.
+ */
+export function calculateInformationAvailability(events = [], role = 'team_leader', elapsedSeconds = 0, sessionSeed = 'OP_FOG_DEFAULT', activeDisruptions = []) {
+  const normRole = normalizeRole(role);
+  if (normRole === TRAINEE_ROLES.INSTRUCTOR) return 100;
+
+  // Total ground-truth events scheduled up to elapsedSeconds (excluding meta decision events)
+  const scheduledSoFar = events.filter(e => {
+    const scheduledSec = parseTimeToSeconds(e.time || e.scheduledTimeSec || e.scheduled_time_sec || 0);
+    return scheduledSec <= elapsedSeconds && !isDecisionEvent(e);
+  });
+
+  if (scheduledSoFar.length === 0) return 100;
+
+  // Delivered events to this participant
+  const deliveredList = evaluateParticipantDeliveredEvents(events, normRole, elapsedSeconds, sessionSeed, activeDisruptions).filter(e => !isDecisionEvent(e));
+  const deliveredCount = deliveredList.length;
+
+  return Math.min(100, Math.max(0, Math.round((deliveredCount / scheduledSoFar.length) * 100)));
+}
+
+/**
+ * Calculates current Shared Awareness level (% alignment or shared knowledge across squad).
+ */
+export function calculateSharedAwareness(events = [], elapsedSeconds = 0, sessionSeed = 'OP_FOG_DEFAULT', activeDisruptions = [], teamMessages = []) {
+  const traineeRoles = [
+    TRAINEE_ROLES.TEAM_LEADER,
+    TRAINEE_ROLES.LAND_MEMBER,
+    TRAINEE_ROLES.AIR_MEMBER,
+    TRAINEE_ROLES.CYBER_EW_MEMBER
+  ];
+
+  let totalAvailSum = 0;
+  for (const r of traineeRoles) {
+    totalAvailSum += calculateInformationAvailability(events, r, elapsedSeconds, sessionSeed, activeDisruptions);
+  }
+  const avgRoleAvailability = totalAvailSum / traineeRoles.length;
+
+  // Bonus factor for team coordination chat messages sent up to elapsedSeconds
+  const relevantMsgs = (teamMessages || []).length;
+  const chatBoost = Math.min(15, relevantMsgs * 3);
+
+  return Math.min(100, Math.max(10, Math.round(avgRoleAvailability * 0.85 + chatBoost)));
+}
+
+/**
+ * Builds a complete, immutable Evidence Snapshot at the exact moment of decision submission.
+ */
+export function createEvidenceSnapshot({
+  scenarioEvents = [],
+  decidingRole = 'team_leader',
+  decidingParticipantId = 'Operator',
+  decisionText = '',
+  confidence = 'Medium',
+  rationale = '',
+  sourcesUsed = [],
+  elapsedSeconds = 0,
+  sessionSeed = 'OP_FOG_DEFAULT',
+  activeDisruptions = [],
+  teamMessages = [],
+  decisionTriggerTimeSec = 0
+}) {
+  const normRole = normalizeRole(decidingRole);
+  const scheduledSoFar = scenarioEvents.filter(e => {
+    const s = parseTimeToSeconds(e.time || e.scheduledTimeSec || e.scheduled_time_sec || 0);
+    return s <= elapsedSeconds;
+  });
+
+  // What was actually delivered to this trainee
+  const deliveredToTrainee = evaluateParticipantDeliveredEvents(scenarioEvents, normRole, elapsedSeconds, sessionSeed, activeDisruptions);
+
+  // What was delayed or dropped from this trainee (ground truth that was withheld/degraded)
+  const deliveredIds = new Set(deliveredToTrainee.map(d => d.id));
+  const delayedOrDropped = [];
+
+  for (const ev of scheduledSoFar) {
+    if (!deliveredIds.has(ev.id)) {
+      const delEv = createDeliveredEvent(ev, normRole, elapsedSeconds, sessionSeed, activeDisruptions);
+      let statusDesc = 'DROPPED';
+      let reason = delEv.droppedReason || 'Withheld by communication friction';
+      if (delEv.deliveryBehavior === DELIVERY_BEHAVIORS.DELAYED) {
+        statusDesc = 'DELAYED';
+        reason = `Delayed: Arrives at T+${formatSecondsToMMSS(delEv.actualDeliveryTimeSec)} (+${delEv.delaySeconds}s lag)`;
+      }
+
+      delayedOrDropped.push({
+        id: ev.id,
+        title: ev.title,
+        domain: ev.domain || 'JOINT',
+        groundTruthContent: ev.content,
+        scheduledTimeFormatted: formatSecondsToMMSS(delEv.scheduledTimeSec),
+        status: statusDesc,
+        deliveryBehavior: delEv.deliveryBehavior,
+        reason
+      });
+    }
+  }
+
+  // Parse confidence as numeric percentage (e.g. "68%", 68, "High" -> 85%, etc.)
+  let confidenceNum = 70;
+  if (typeof confidence === 'number') {
+    confidenceNum = Math.min(100, Math.max(0, Math.round(confidence)));
+  } else if (typeof confidence === 'string') {
+    const matched = confidence.match(/\d+/);
+    if (matched) {
+      confidenceNum = parseInt(matched[0], 10);
+    } else {
+      const lower = confidence.toLowerCase();
+      if (lower.includes('high')) confidenceNum = 85;
+      else if (lower.includes('low')) confidenceNum = 40;
+      else confidenceNum = 65;
+    }
+  }
+
+  const infoAvailabilityPct = calculateInformationAvailability(scenarioEvents, normRole, elapsedSeconds, sessionSeed, activeDisruptions);
+  const sharedAwarenessPct = calculateSharedAwareness(scenarioEvents, elapsedSeconds, sessionSeed, activeDisruptions, teamMessages);
+  const responseTimeSec = Math.max(0, elapsedSeconds - (decisionTriggerTimeSec || elapsedSeconds));
+
+  // Active disruptions affecting this specific role
+  const disruptionsAffectingRole = (activeDisruptions || []).filter(d => d.target === 'all' || d.target === normRole);
+
+  return {
+    participantId: decidingParticipantId,
+    participantRole: normRole,
+    decisionTimestamp: new Date().toISOString(),
+    elapsedSeconds,
+    elapsedTimeFormatted: formatSecondsToMMSS(elapsedSeconds),
+    decision: decisionText,
+    confidence: `${confidenceNum}%`,
+    confidenceNum,
+    rationale,
+    sourcesUsed: sourcesUsed || [],
+    eventsAvailable: deliveredToTrainee.map(e => ({
+      id: e.id,
+      title: e.title,
+      domain: e.domain,
+      content: e.content,
+      deliveredAtSec: e.actualDeliveryTimeSec,
+      deliveredTimeFormatted: formatSecondsToMMSS(e.actualDeliveryTimeSec),
+      confidence: e.confidence,
+      deliveryBehavior: e.deliveryBehavior
+    })),
+    eventsDelayedOrDropped: delayedOrDropped,
+    communicationState: {
+      isDegraded: disruptionsAffectingRole.length > 0,
+      activeDisruptionsCount: disruptionsAffectingRole.length,
+      disruptions: disruptionsAffectingRole
+    },
+    teamMessagesAvailable: (teamMessages || []).map(m => ({
+      id: m.id,
+      senderId: m.senderId,
+      senderRole: m.senderRole,
+      text: m.text,
+      timestamp: m.timestamp
+    })),
+    activeDisruptions: activeDisruptions || [],
+    metrics: {
+      responseTimeSec,
+      responseTimeFormatted: `${responseTimeSec}s`,
+      informationAvailabilityPct,
+      confidenceNum,
+      confidenceVsAvailabilityDelta: confidenceNum - infoAvailabilityPct,
+      sharedAwarenessPct
+    }
+  };
+}
+
+>>>>>>> Stashed changes
