@@ -11,7 +11,18 @@ import {
   generateAsymmetryMatrix,
   filterParticipantMessages, 
   DELIVERY_STATUS,
+<<<<<<< Updated upstream
   formatSecondsToMMSS
+=======
+  formatSecondsToMMSS,
+  isDecisionEvent,
+  calculateInformationAvailability,
+  calculateSharedAwareness,
+  createEvidenceSnapshot,
+  getDecisionTargetRoles,
+  isRoleAllowedForDecision,
+  normalizeRole
+>>>>>>> Stashed changes
 } from './services/simulationEngine.js';
 import { initWebSocketServer, wsManager } from './services/websocketServer.js';
 
@@ -1006,6 +1017,68 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
     const elapsedMinutes = d.elapsedMinutes !== undefined ? parseInt(d.elapsedMinutes, 10) : Math.floor(rawElapsedSeconds / 60);
     const elapsedFormatted = d.elapsedTimeFormatted || `${String(Math.floor(rawElapsedSeconds / 60)).padStart(2,'0')}:${String(rawElapsedSeconds % 60).padStart(2,'0')}`;
 
+<<<<<<< Updated upstream
+=======
+    // Build or accept Evidence Snapshot
+    const snapshot = typeof exRow.scenario_snapshot_json === 'string'
+      ? JSON.parse(exRow.scenario_snapshot_json)
+      : (exRow.scenario_snapshot_json || {});
+    const scenarioEvents = snapshot.events || [];
+
+    // Verify role authorization against active decision point targetRoles
+    let decisionPoint = null;
+    if (d.decisionPointId) {
+      decisionPoint = scenarioEvents.find(e => e.id === d.decisionPointId);
+    }
+    if (!decisionPoint && d.title) {
+      decisionPoint = scenarioEvents.find(e => isDecisionEvent(e) && e.title === d.title);
+    }
+    if (!decisionPoint) {
+      decisionPoint = scenarioEvents.find(e => isDecisionEvent(e));
+    }
+
+    const targetRoles = decisionPoint 
+      ? getDecisionTargetRoles(decisionPoint)
+      : (Array.isArray(d.targetRoles) ? d.targetRoles.map(normalizeRole) : (d.targetRole ? [normalizeRole(d.targetRole)] : []));
+
+    if (targetRoles.length > 0 && !targetRoles.includes('all')) {
+      const normSubmittedRole = normalizeRole(submittedRole);
+      const isAllowed = normSubmittedRole === 'instructor' || targetRoles.includes(normSubmittedRole);
+      if (!isAllowed) {
+        return res.status(403).json({
+          error: `Forbidden: Role "${normSubmittedRole}" is not authorized to submit this decision. Permitted role(s): ${targetRoles.join(', ')}.`,
+          decisionPointId: decisionPoint?.id || d.decisionPointId || null,
+          targetRoles,
+          submittedRole: normSubmittedRole
+        });
+      }
+    }
+
+    const sessionSeed = exRow.session_code || exRow.id || 'OP_FOG_DEFAULT';
+    const activeDisruptions = wsManager ? wsManager.getActiveDisruptions(exRow.session_code || exRow.id) : [];
+    const teamMessages = typeof exRow.team_messages_json === 'string'
+      ? JSON.parse(exRow.team_messages_json)
+      : (exRow.team_messages_json || []);
+
+    const sourcesUsed = Array.isArray(d.sourcesUsed) ? d.sourcesUsed : [];
+    const evidenceSnapshot = (d.evidenceSnapshot && Object.keys(d.evidenceSnapshot).length > 0)
+      ? d.evidenceSnapshot
+      : createEvidenceSnapshot({
+          scenarioEvents,
+          decidingRole: submittedRole,
+          decidingParticipantId: submittedBy,
+          decisionText: d.title.trim(),
+          confidence: d.confidence || 'Medium',
+          rationale: d.rationale.trim(),
+          sourcesUsed,
+          elapsedSeconds: rawElapsedSeconds,
+          sessionSeed,
+          activeDisruptions,
+          teamMessages,
+          decisionTriggerTimeSec: d.decisionTriggerTimeSec || rawElapsedSeconds
+        });
+
+>>>>>>> Stashed changes
     // ON CONFLICT (id) DO NOTHING: duplicate submission (double-click, retry) is silently accepted
     const result = await queryDB(
       `INSERT INTO participant_decisions
