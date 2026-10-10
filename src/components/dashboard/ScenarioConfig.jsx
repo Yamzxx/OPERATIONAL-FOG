@@ -62,6 +62,7 @@ export const ScenarioConfig = ({
         id: `ev-${Date.now()}`,
         time: `${nextMin}:00`,
         title: 'New Disruption Event',
+        domain: 'JOINT',
         type: 'warning',
         deliveryBehavior: 'normal',
         delaySeconds: 180,
@@ -328,7 +329,7 @@ export const ScenarioConfig = ({
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 180px 160px', gap: '12px', marginBottom: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '100px 100px 1fr 160px 140px', gap: '10px', marginBottom: '12px' }}>
                 <div>
                   <label className="gov-form-label" style={{ fontSize: '11px' }}>Time (MM:SS)</label>
                   <input 
@@ -338,6 +339,21 @@ export const ScenarioConfig = ({
                     onChange={(e) => handleUpdateEvent(idx, 'time', e.target.value)}
                     placeholder="05:00" 
                   />
+                </div>
+
+                <div>
+                  <label className="gov-form-label" style={{ fontSize: '11px' }}>Domain</label>
+                  <select 
+                    className="gov-form-select"
+                    value={ev.domain || 'JOINT'}
+                    onChange={(e) => handleUpdateEvent(idx, 'domain', e.target.value)}
+                  >
+                    <option value="LAND">LAND</option>
+                    <option value="AIR">AIR</option>
+                    <option value="CYBER">CYBER</option>
+                    <option value="EW">EW</option>
+                    <option value="JOINT">JOINT</option>
+                  </select>
                 </div>
 
                 <div>
@@ -352,32 +368,32 @@ export const ScenarioConfig = ({
                 </div>
 
                 <div>
-                  <label className="gov-form-label" style={{ fontSize: '11px' }}>Delivery Behaviour</label>
+                  <label className="gov-form-label" style={{ fontSize: '11px' }}>Delivery Type</label>
                   <select 
                     className="gov-form-select"
                     value={ev.deliveryBehavior}
                     onChange={(e) => handleUpdateEvent(idx, 'deliveryBehavior', e.target.value)}
                   >
-                    <option value="normal">Normal Delivery</option>
+                    <option value="normal">Normal (Delivered On Time)</option>
                     <option value="delayed">Delayed Delivery</option>
-                    <option value="dropped">Dropped Message</option>
+                    <option value="dropped">Dropped (Lost Message)</option>
                     <option value="conflicting">Conflicting Report</option>
-                    <option value="incomplete">Incomplete Report</option>
+                    <option value="incomplete">Incomplete (Cut Off)</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="gov-form-label" style={{ fontSize: '11px' }}>Target Recipient</label>
+                  <label className="gov-form-label" style={{ fontSize: '11px' }}>Target Role</label>
                   <select 
                     className="gov-form-select"
-                    value={ev.intendedRecipient}
+                    value={ev.intendedRecipient || ev.recipientRole || 'all'}
                     onChange={(e) => handleUpdateEvent(idx, 'intendedRecipient', e.target.value)}
                   >
-                    <option value="all">All Participants</option>
-                    <option value="commander">Commander</option>
-                    <option value="field_unit">Field Unit</option>
-                    <option value="logistics">Logistics</option>
-                    <option value="signals">Signals</option>
+                    <option value="all">All Roles</option>
+                    <option value="team_leader">Team Leader</option>
+                    <option value="land_member">Land Member</option>
+                    <option value="air_member">Air Member</option>
+                    <option value="cyber_ew_member">Cyber/EW Member</option>
                   </select>
                 </div>
               </div>
@@ -386,7 +402,7 @@ export const ScenarioConfig = ({
               {ev.deliveryBehavior === 'delayed' && (
                 <div style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', padding: '8px 12px', marginBottom: '10px', fontSize: '12px' }}>
                   <label className="gov-form-label" style={{ fontSize: '11px', color: '#78350F' }}>
-                    Latency Delay Amount (Seconds)
+                    Delay in Seconds
                   </label>
                   <input 
                     type="number"
@@ -396,13 +412,13 @@ export const ScenarioConfig = ({
                     onChange={(e) => handleUpdateEvent(idx, 'delaySeconds', parseInt(e.target.value, 10) || 0)}
                   />
                   <span style={{ fontSize: '11px', color: '#92400E', marginLeft: '8px' }}>
-                    Will be delivered at T+ {formatSecondsToMMSS((parseTimeToSeconds(ev.time) || 0) + (ev.delaySeconds || 300))}
+                    Will arrive at {formatSecondsToMMSS((parseTimeToSeconds(ev.time) || 0) + (ev.delaySeconds || 300))}
                   </span>
                 </div>
               )}
 
               <div>
-                <label className="gov-form-label" style={{ fontSize: '11px' }}>Fictional Message Content</label>
+                <label className="gov-form-label" style={{ fontSize: '11px' }}>Message Text</label>
                 <textarea 
                   className="gov-form-input"
                   rows={2}

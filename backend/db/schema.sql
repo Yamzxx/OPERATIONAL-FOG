@@ -77,12 +77,15 @@ CREATE TABLE IF NOT EXISTS communication_events (
   title TEXT NOT NULL,
   content TEXT NOT NULL,
   event_type VARCHAR(32) NOT NULL DEFAULT 'info', -- info | warning | alert | delay
+  domain VARCHAR(32) NOT NULL DEFAULT 'JOINT', -- LAND | AIR | CYBER | EW | JOINT
   delivery_behavior VARCHAR(32) NOT NULL DEFAULT 'normal', -- normal | delayed | dropped | conflicting | incomplete
-  recipient_role VARCHAR(32) NOT NULL DEFAULT 'all', -- all | commander | field_unit | logistics | signals
+  recipient_role VARCHAR(32) NOT NULL DEFAULT 'all', -- all | team_leader | land_member | air_member | cyber_ew_member | instructor
   scheduled_time_sec INTEGER NOT NULL DEFAULT 0,
   delay_seconds INTEGER NOT NULL DEFAULT 0,
   actual_delivery_time_sec INTEGER NOT NULL DEFAULT 0,
+  confidence VARCHAR(32) DEFAULT '80%',
   status VARCHAR(32) NOT NULL DEFAULT 'PENDING', -- PENDING | DELIVERED | DELAYED | DROPPED
+  role_variations_json JSONB DEFAULT '{}'::jsonb,
   instructor_notes TEXT DEFAULT '',
   conflicts_with_id VARCHAR(64),
   incomplete_fields VARCHAR(128),

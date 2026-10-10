@@ -36,6 +36,9 @@ class MultiplayerEngine {
     this.listeners = [];
 
     if (this.channel) {
+      if (typeof this.channel.unref === 'function') {
+        this.channel.unref();
+      }
       this.channel.onmessage = (event) => {
         this.notifyListeners(event.data);
       };
@@ -221,30 +224,34 @@ class MultiplayerEngine {
           })
         });
 
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || `Invalid Join Code "${cleanCode}". Session not found in database.`);
+        if (res.ok) {
+          const data = await res.json();
+          // Successfully joined via PostgreSQL backend
+          this.updateSession(data);
+          this.broadcast('PARTICIPANT_JOINED', { sessionCode: cleanCode, participant: { serviceId, displayName, role } });
+          return data;
+        } else {
+          // Backend returned error (e.g. 404), fall through to local fallback if local session exists
+          const localSession = this.getSessionByCode(cleanCode);
+          if (!localSession) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || `Invalid Join Code "${cleanCode}". Session not found in database.`);
+          }
         }
-
-        // Successfully joined via PostgreSQL backend
-        this.updateSession(data);
-        this.broadcast('PARTICIPANT_JOINED', { sessionCode: cleanCode, participant: { serviceId, displayName, role } });
-        return data;
       } catch (err) {
-        // Re-throw any error that came from the backend (4xx/5xx responses).
-        // Only fall through to local storage if the network itself was unreachable
-        // (i.e., the backend server is completely down).
         const isNetworkError = (
           err.message?.includes('Failed to fetch') ||
           err.message?.includes('NetworkError') ||
           err.message?.includes('fetch') ||
           err.name === 'TypeError'
         );
-        if (!isNetworkError) {
-          // This is a real server error (404 invalid code, 400 completed, etc.) — surface it.
+        const localSession = this.getSessionByCode(cleanCode);
+        if (!isNetworkError && !localSession) {
           throw err;
         }
-        console.warn('Backend API server unreachable during join, attempting local cache fallback:', err.message);
+        if (isNetworkError) {
+          console.warn('Backend API server unreachable during join, attempting local cache fallback:', err.message);
+        }
       }
     }
 
@@ -301,21 +308,49 @@ class MultiplayerEngine {
 
   // Add team message
   sendTeamMessage(sessionCode, { senderId, senderName, senderRole, text }) {
-    const session = this.getSessionByCode(sessionCode);
-    if (!session) return null;
+    if (!text || !text.trim()) return null;
+    let session = this.getSessionByCode(sessionCode);
+    if (!session) {
+      const sessions = this.getSessions();
+      session = sessions.find(s => s.id === sessionCode || s.sessionCode === sessionCode);
+      if (!session) {
+        session = {
+          id: sessionCode,
+          sessionCode: sessionCode,
+          name: 'Exercise Session',
+          participants: [{ serviceId: senderId, displayName: senderName, role: senderRole, status: 'Online' }],
+          teamMessages: []
+        };
+      }
+    }
 
     const newMessage = {
-      id: `msg-${Date.now()}`,
-      senderId,
-      senderName,
-      senderRole,
+      id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      senderId: senderId || 'Operator',
+      senderName: senderName || 'Operator',
+      senderRole: senderRole || 'team_leader',
       text: text.trim(),
       timestamp: new Date().toISOString()
     };
 
     session.teamMessages = [...(session.teamMessages || []), newMessage];
     this.updateSession(session);
-    this.broadcast('TEAM_MESSAGE_SENT', { sessionCode, message: newMessage });
+    this.broadcast('TEAM_MESSAGE_SENT', { sessionCode: session.sessionCode || sessionCode, message: newMessage, session });
+
+    // Also push to backend API asynchronously if available
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(session.sessionCode || sessionCode)}/team-messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: text.trim(),
+          senderId,
+          senderName,
+          senderRole
+        })
+      }).catch(() => {});
+    }
+
     return newMessage;
   }
 
@@ -384,6 +419,165 @@ class MultiplayerEngine {
     this.updateSession(session);
     this.broadcast('PARTICIPANT_LEFT', { sessionCode, serviceId });
     return session;
+  }
+
+  // Real-Time WebSocket Session Room Connection
+  initWebSocket(sessionCode, role = 'team_leader', userInfo = {}) {
+    if (typeof window === 'undefined' || typeof WebSocket === 'undefined') return;
+    if (this.ws && this.currentWsCode === sessionCode && this.ws.readyState === WebSocket.OPEN) return;
+
+    this.currentWsCode = sessionCode;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname || 'localhost';
+    const wsUrl = `${protocol}//${host}:4000/ws`;
+
+    try {
+      this.ws = new WebSocket(wsUrl);
+
+      this.ws.onopen = () => {
+        this.ws.send(JSON.stringify({
+          type: 'JOIN_ROOM',
+          payload: {
+            sessionCode,
+            role,
+            userId: userInfo?.id || userInfo?.serviceId || 'user-anon',
+            displayName: userInfo?.displayName || 'Operator'
+          }
+        }));
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'DISRUPTION_UPDATED' || msg.type === 'DISRUPTION_EXPIRED' || msg.type === 'DISRUPTION_TICK' || msg.type === 'ROOM_SYNC') {
+            const code = msg.payload?.sessionCode || sessionCode;
+            const session = this.getSessionByCode(code);
+            if (session) {
+              if (msg.payload?.activeDisruptions !== undefined) {
+                session.activeDisruptions = msg.payload.activeDisruptions;
+              }
+              if (msg.payload?.disruptionsLog !== undefined) {
+                session.disruptionsLog = msg.payload.disruptionsLog;
+              }
+              this.updateSession(session);
+            }
+          }
+          this.notifyListeners(msg);
+        } catch (e) {}
+      };
+
+      this.ws.onclose = () => {
+        // Will reconnect on subsequent interaction or room join
+      };
+    } catch (e) {
+      // WS unsupported or server not reachable
+    }
+  }
+
+  // Inject disruption into active exercise session
+  injectDisruption(sessionCode, disruptionData = {}) {
+    const code = (sessionCode || 'DEFAULT').toUpperCase();
+    let session = this.getSessionByCode(code);
+    if (!session) {
+      session = {
+        id: code,
+        sessionCode: code,
+        name: 'Live Training Exercise',
+        activeDisruptions: [],
+        disruptionsLog: []
+      };
+    }
+
+    const { target = 'all', disruptionType = 'delay', severity = 'high', duration = 60 } = disruptionData;
+    const durNum = parseInt(duration, 10) || 60;
+
+    const newDisruption = {
+      id: `inj-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      sessionCode: code,
+      target,
+      disruptionType,
+      severity,
+      duration: durNum,
+      remainingSec: durNum,
+      injectedAt: new Date().toISOString(),
+      status: 'Active'
+    };
+
+    // Update session locally for 0ms latency
+    session.activeDisruptions = (session.activeDisruptions || []).filter(d => d.target !== target);
+    session.activeDisruptions.push(newDisruption);
+    session.disruptionsLog = [...(session.disruptionsLog || []), newDisruption];
+    this.updateSession(session);
+
+    // Send via WebSocket if connected
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'INJECT_DISRUPTION',
+        payload: { sessionCode: code, target, disruptionType, severity, duration: durNum }
+      }));
+    }
+
+    // Also push via REST API fallback
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(code)}/disruptions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target, disruptionType, severity, duration: durNum })
+      }).catch(() => {});
+    }
+
+    this.broadcast('DISRUPTION_UPDATED', {
+      sessionCode: code,
+      activeDisruptions: session.activeDisruptions,
+      disruptionsLog: session.disruptionsLog,
+      latestInjection: newDisruption
+    });
+
+    return newDisruption;
+  }
+
+  clearDisruption(sessionCode, target = 'all') {
+    const code = (sessionCode || 'DEFAULT').toUpperCase();
+    const session = this.getSessionByCode(code);
+    if (session) {
+      if (target === 'all') {
+        session.activeDisruptions = [];
+      } else {
+        session.activeDisruptions = (session.activeDisruptions || []).filter(d => d.target !== target);
+      }
+      this.updateSession(session);
+    }
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'CLEAR_DISRUPTION',
+        payload: { sessionCode: code, target }
+      }));
+    }
+
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(code)}/disruptions/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target })
+      }).catch(() => {});
+    }
+
+    this.broadcast('DISRUPTION_UPDATED', {
+      sessionCode: code,
+      activeDisruptions: session?.activeDisruptions || [],
+      disruptionsLog: session?.disruptionsLog || []
+    });
+  }
+
+  getActiveDisruptions(sessionCode) {
+    const session = this.getSessionByCode(sessionCode);
+    return session?.activeDisruptions || [];
+  }
+
+  getDisruptionsLog(sessionCode) {
+    const session = this.getSessionByCode(sessionCode);
+    return session?.disruptionsLog || [];
   }
 }
 

@@ -18,9 +18,21 @@ import {
   BarChart2,
   TrendingUp,
   ShieldCheck,
+  Radio,
+  Layers,
+  ShieldAlert,
+  HelpCircle,
+  ChevronRight,
+  ChevronDown,
   Zap
 } from 'lucide-react';
-import { formatSecondsToMMSS } from '../../services/eventEngine';
+import { 
+  ROLE_LABELS, 
+  DOMAINS, 
+  TARGET_LABELS,
+  DISRUPTION_TYPE_LABELS,
+  formatSecondsToMMSS 
+} from '../../services/eventEngine';
 import { TimelineReplay } from './TimelineReplay';
 import { generateAARPDFReport } from '../../services/pdfExporter';
 import { useToast } from '../Toast';
@@ -35,8 +47,10 @@ export const AfterActionReview = ({
   const [noteInput, setNoteInput] = useState('');
   const [scenarioFilter, setScenarioFilter] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  // summary | asymmetry | decisions | chat | disruptions | participant_history | comms_analysis | replay | score
+  const [activeReportTab, setActiveReportTab] = useState('summary');
+  const [expandedEventId, setExpandedEventId] = useState(null);
   const [selectedParticipantRole, setSelectedParticipantRole] = useState('ALL');
-  const [activeReportTab, setActiveReportTab] = useState('summary'); // summary | replay | participant_history | comms_analysis | score
 
   const selectedAAR = aars.find(a => a.id === selectedAARId) || aars[0];
 
@@ -44,6 +58,7 @@ export const AfterActionReview = ({
     const matchesSearch = searchQuery === '' || 
       aar.sessionName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       aar.scenarioTitle?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      aar.sessionCode?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       aar.id?.toLowerCase().includes(searchQuery.toLowerCase());
     
     const matchesScenario = scenarioFilter === 'ALL' || aar.scenarioTitle?.toUpperCase().includes(scenarioFilter);
@@ -63,6 +78,9 @@ export const AfterActionReview = ({
 
   const decisions = selectedAAR?.decisions || [];
   const events = selectedAAR?.events || [];
+  const asymmetryMatrix = selectedAAR?.asymmetryMatrix || [];
+  const teamMessages = selectedAAR?.teamMessages || [];
+  const disruptions = selectedAAR?.disruptions || [];
   const participants = selectedAAR?.participants || [
     { displayName: selectedAAR?.creator || 'Operator', role: 'commander' }
   ];
@@ -78,6 +96,25 @@ export const AfterActionReview = ({
     pending: events.filter(e => e.status === 'PENDING').length
   };
 
+  // Calculate statistics on information friction (from role variations when available)
+  let delayedEventsCount = 0;
+  let droppedEventsCount = 0;
+  let incompleteOrConflictingCount = 0;
+
+  events.forEach(ev => {
+    if (ev.roleVariations) {
+      Object.values(ev.roleVariations).forEach(v => {
+        if (v.deliveryBehavior === 'delayed') delayedEventsCount++;
+        if (v.deliveryBehavior === 'dropped') droppedEventsCount++;
+        if (v.deliveryBehavior === 'incomplete' || v.deliveryBehavior === 'conflicting') incompleteOrConflictingCount++;
+      });
+    } else {
+      if (ev.deliveryBehavior === 'delayed') delayedEventsCount++;
+      if (ev.deliveryBehavior === 'dropped') droppedEventsCount++;
+      if (ev.deliveryBehavior === 'incomplete' || ev.deliveryBehavior === 'conflicting') incompleteOrConflictingCount++;
+    }
+  });
+
   // -----------------------------------------------------------------------
   // PERFORMANCE SCORE COMPUTATION (Feature 9)
   // Weighted scoring across 4 pillars:
@@ -87,7 +124,6 @@ export const AfterActionReview = ({
   //   4. Intel Verification   (15 pts) — acknowledging conflicting / incomplete intel
   // -----------------------------------------------------------------------
   const computePerformanceScore = () => {
-    const totalEvents = commStats.total || 0;
     const frictionEvents = (commStats.delayed || 0) + (commStats.dropped || 0) + (commStats.incomplete || 0) + (commStats.conflicting || 0);
     const decisionsLogged = decisions.length;
 
@@ -150,13 +186,30 @@ export const AfterActionReview = ({
 
   const perfScore = selectedAAR ? computePerformanceScore() : null;
 
+  const getStatusBadgeStyle = (statusKey) => {
+    switch (statusKey) {
+      case 'delivered':
+        return { background: '#DCFCE7', color: '#15803D', border: '1px solid #86EFAC' };
+      case 'delayed':
+        return { background: '#FEF3C7', color: '#B45309', border: '1px solid #FCD34D' };
+      case 'dropped':
+        return { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' };
+      case 'partial':
+        return { background: '#F3E8FF', color: '#7E22CE', border: '1px solid #D8B4FE' };
+      case 'conflicting':
+        return { background: '#FFEDD5', color: '#C2410C', border: '1px solid #FDBA74' };
+      default:
+        return { background: '#F1F5F9', color: '#64748B', border: '1px solid #E2E8F0' };
+    }
+  };
+
   return (
     <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {/* Top Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-family-serif)', fontSize: '24px', fontWeight: '800', color: 'var(--color-primary-navy)' }}>
-            After-Action Review (AAR) & Telemetry Audit Workspace
+            After-Action Review (AAR) &amp; Telemetry Audit Workspace
           </h1>
           <p style={{ fontSize: '13px', color: '#64748B', marginTop: '4px' }}>
             Inspect chronological timelines, participant decision rationales, information availability, and generate PDF audit reports.
@@ -256,7 +309,7 @@ export const AfterActionReview = ({
                     {aar.scenarioTitle}
                   </div>
                   <div style={{ fontSize: '10px', color: '#64748B', marginTop: '6px', display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Decisions: {aar.decisionsCount || aar.decisions?.length || 0}</span>
+                    <span>Room: <strong style={{ color: '#2563EB' }}>{aar.sessionCode || 'SOLO'}</strong></span>
                     <span>{new Date(aar.startTime).toLocaleDateString()}</span>
                   </div>
                   {aar.isSample && (
@@ -274,10 +327,10 @@ export const AfterActionReview = ({
         {selectedAAR ? (
           <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', borderTop: '3px solid var(--color-primary-navy)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {/* Report Top Meta Bar */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px', flexWrap: 'wrap', gap: '12px' }}>
               <div>
                 <div style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: 'bold' }}>
-                  AAR REF: {selectedAAR.id} {selectedAAR.isSample ? '(PRE-CONFIGURED TEMPLATE)' : '(PERSISTED EXERCISE RECORD)'}
+                  AAR REF: {selectedAAR.id} • ROOM: {selectedAAR.sessionCode || 'SOLO-MODE'} {selectedAAR.isSample ? '(PRE-CONFIGURED TEMPLATE)' : '(PERSISTED EXERCISE RECORD)'}
                 </div>
                 <h2 style={{ fontFamily: 'var(--font-family-serif)', fontSize: '20px', fontWeight: '800', color: 'var(--color-primary-navy)', margin: '2px 0 4px' }}>
                   {selectedAAR.sessionName}
@@ -288,32 +341,37 @@ export const AfterActionReview = ({
               </div>
 
               <div style={{ textAlign: 'right', fontSize: '12px', color: '#64748B' }}>
-                <div>Start: {new Date(selectedAAR.startTime).toLocaleString()}</div>
-                <div>End: {new Date(selectedAAR.endTime || selectedAAR.startTime).toLocaleString()}</div>
+                <div>Completed: <strong>{new Date(selectedAAR.endTime || selectedAAR.startTime).toLocaleString()}</strong></div>
+                <div>Duration: <strong>{selectedAAR.durationMinutes || 5} Minutes</strong></div>
               </div>
             </div>
 
             {/* Sub-View Navigation Tabs */}
-            <div style={{ display: 'flex', gap: '4px', borderBottom: '2px solid #CBD5E1' }}>
+            <div style={{ display: 'flex', gap: '4px', borderBottom: '2px solid #CBD5E1', overflowX: 'auto' }}>
               {[
-                { id: 'summary', label: 'Exercise Summary' },
-                { id: 'replay', label: 'Timeline Replay Player' },
-                { id: 'participant_history', label: 'Participant History & Info State' },
-                { id: 'comms_analysis', label: 'Communication Analysis' },
+                { id: 'summary', label: '📋 Exercise Summary' },
+                { id: 'asymmetry', label: '📍 Information Delivery Matrix' },
+                { id: 'decisions', label: `🏛 Decisions Audit (${decisions.length})` },
+                { id: 'chat', label: `💼 Team Chat Log (${teamMessages.length})` },
+                { id: 'disruptions', label: `⚡ Disruptions (${disruptions.length})` },
+                { id: 'participant_history', label: '👤 Participant History' },
+                { id: 'comms_analysis', label: '📊 Comms Analysis' },
+                { id: 'replay', label: '▶️ Timeline Replay' },
                 { id: 'score', label: '🏅 Performance Score' }
               ].map(tab => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveReportTab(tab.id)}
                   style={{
-                    padding: '8px 16px',
-                    fontSize: '13px',
+                    padding: '8px 14px',
+                    fontSize: '12px',
                     fontWeight: 'bold',
                     border: 'none',
                     borderBottom: activeReportTab === tab.id ? '3px solid var(--color-terracotta)' : '3px solid transparent',
                     backgroundColor: activeReportTab === tab.id ? '#F8FAFC' : 'transparent',
                     color: activeReportTab === tab.id ? 'var(--color-primary-navy)' : '#64748B',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap'
                   }}
                 >
                   {tab.label}
@@ -325,25 +383,40 @@ export const AfterActionReview = ({
             {activeReportTab === 'summary' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 {/* Summary Metrics Box */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', backgroundColor: '#F8FAFC', padding: '16px', border: '1px solid #CBD5E1' }}>
-                  <div>
-                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>EXERCISE DURATION</div>
-                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>{selectedAAR.durationMinutes || 'N/A'} mins</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
+                  <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '12px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>EXERCISE EVENTS</div>
+                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginTop: '2px' }}>
+                      {events.length || 7} Dispatches
+                    </div>
                   </div>
 
-                  <div>
-                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>DECISIONS LOGGED</div>
-                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>{decisions.length} Actions</div>
+                  <div style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: '4px', padding: '12px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#92400E' }}>COMMUNICATION DELAYS</div>
+                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#B45309', marginTop: '2px' }}>
+                      {delayedEventsCount || commStats.delayed} Instances
+                    </div>
                   </div>
 
-                  <div>
-                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>PARTICIPANTS</div>
-                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#0369A1' }}>{participants.length} Connected</div>
+                  <div style={{ backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: '4px', padding: '12px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#991B1B' }}>DROPPED MESSAGES</div>
+                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#DC2626', marginTop: '2px' }}>
+                      {droppedEventsCount || commStats.dropped} Blocked
+                    </div>
                   </div>
 
-                  <div>
-                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748B' }}>SIMULATION EVENTS</div>
-                    <div style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-terracotta)' }}>{commStats.total} Dispatches</div>
+                  <div style={{ backgroundColor: '#DCFCE7', border: '1px solid #86EFAC', borderRadius: '4px', padding: '12px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#166534' }}>DECISIONS LOGGED</div>
+                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#15803D', marginTop: '2px' }}>
+                      {decisions.length} Decisions
+                    </div>
+                  </div>
+
+                  <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '4px', padding: '12px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#1D4ED8' }}>INJECTED DISRUPTIONS</div>
+                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#2563EB', marginTop: '2px' }}>
+                      {disruptions.length} Injections
+                    </div>
                   </div>
 
                   {/* Degradation breakdown row — all values from commStats derived from real DB records */}
@@ -373,55 +446,29 @@ export const AfterActionReview = ({
                   )}
                 </div>
 
-                {/* Submitted Decisions Table */}
+                {/* Participants Breakdown */}
                 <div>
-                  <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '10px' }}>
-                    Command Decisions & Rationales
+                  <h3 style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '8px' }}>
+                    Connected Participants &amp; Roles
                   </h3>
-
-                  {decisions.length === 0 ? (
-                    <div style={{ backgroundColor: '#F8FAFC', padding: '16px', fontSize: '13px', color: '#64748B' }}>
-                      No decisions logged during this exercise session.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      {decisions.map((d, index) => (
-                        <div 
-                          key={d.id || index}
-                          style={{
-                            backgroundColor: '#F8FAFC',
-                            border: '1px solid #CBD5E1',
-                            borderLeft: '4px solid var(--color-primary-navy)',
-                            padding: '14px'
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
-                            <span>Decision #{index + 1}: {d.title}</span>
-                            <span style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: 'bold' }}>
-                              T+ {d.elapsedTimeFormatted || `${d.elapsedMinutes || 0} mins`}
-                            </span>
-                          </div>
-
-                          <div style={{ fontSize: '13px', color: 'var(--color-text-primary)', marginTop: '6px', lineHeight: '1.5' }}>
-                            <strong>Rationale & Assumptions:</strong> {d.rationale}
-                          </div>
-
-                          <div style={{ fontSize: '11px', color: '#64748B', marginTop: '8px', display: 'flex', gap: '16px' }}>
-                            <span>Operator: <strong>{d.submittedBy || 'Operator'}</strong> ({d.submittedRole || 'Commander'})</span>
-                            <span>Confidence: <strong>{d.confidence || 'Medium'}</strong></span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {participants.map((p, idx) => (
+                      <div key={idx} style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '6px 12px', fontSize: '12px' }}>
+                        <span style={{ fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>{p.displayName || p.serviceId}</span>
+                        <span style={{ marginLeft: '6px', fontSize: '10px', background: '#E2E8F0', color: '#475569', padding: '1px 6px', borderRadius: '2px', fontWeight: 'bold' }}>
+                          {ROLE_LABELS[p.role] || p.role}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Instructor Notes */}
                 <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', padding: '18px', borderTop: '3px solid var(--color-terracotta)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
                       <MessageSquare size={16} style={{ color: 'var(--color-terracotta)' }} />
-                      <span>Instructor Debrief Observations & Notes</span>
+                      <span>Instructor Debrief Observations &amp; Notes</span>
                     </h3>
 
                     {userRole === 'instructor' && (
@@ -453,12 +500,268 @@ export const AfterActionReview = ({
               </div>
             )}
 
-            {/* TAB 2: TIMELINE REPLAY PLAYER */}
+            {/* TAB 2: INFORMATION ASYMMETRY DELIVERY MATRIX */}
+            {activeReportTab === 'asymmetry' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ fontSize: '13px', color: '#475569' }}>
+                  This table shows the ground truth known to the system, compared against the delivery status for each role. Click any row to expand the exact variations.
+                </div>
+
+                <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '4px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #E2E8F0', textAlign: 'left' }}>
+                        <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Event Title</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Time</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Team Leader</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Land Member</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Air Member</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Cyber/EW</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {events.map((ev, idx) => {
+                        const isExpanded = expandedEventId === (ev.id || idx);
+                        const variations = ev.roleVariations || {};
+
+                        const leaderStatus = variations.team_leader?.deliveryBehavior || ev.deliveryBehavior || 'normal';
+                        const landStatus = variations.land_member?.deliveryBehavior || ev.deliveryBehavior || 'normal';
+                        const airStatus = variations.air_member?.deliveryBehavior || ev.deliveryBehavior || 'normal';
+                        const cyberStatus = variations.cyber_ew_member?.deliveryBehavior || ev.deliveryBehavior || 'normal';
+
+                        return (
+                          <React.Fragment key={ev.id || idx}>
+                            <tr 
+                              onClick={() => setExpandedEventId(isExpanded ? null : (ev.id || idx))}
+                              style={{ borderBottom: '1px solid #E2E8F0', backgroundColor: isExpanded ? '#EFF6FF' : '#FFF', cursor: 'pointer' }}
+                            >
+                              <td style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  {isExpanded ? <ChevronDown size={14} color="#2563EB" /> : <ChevronRight size={14} color="#64748B" />}
+                                  <span>{ev.title}</span>
+                                </div>
+                              </td>
+                              <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>
+                                {ev.time || '00:00'}
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{ padding: '2px 6px', borderRadius: '3px', fontWeight: 'bold', ...getStatusBadgeStyle(leaderStatus) }}>
+                                  {leaderStatus === 'delayed' ? 'Delayed (+20s)' : leaderStatus}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{ padding: '2px 6px', borderRadius: '3px', fontWeight: 'bold', ...getStatusBadgeStyle(landStatus) }}>
+                                  {landStatus === 'normal' ? 'Delivered' : landStatus}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{ padding: '2px 6px', borderRadius: '3px', fontWeight: 'bold', ...getStatusBadgeStyle(airStatus) }}>
+                                  {airStatus === 'incomplete' ? 'Incomplete' : airStatus}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{ padding: '2px 6px', borderRadius: '3px', fontWeight: 'bold', ...getStatusBadgeStyle(cyberStatus) }}>
+                                  {cyberStatus === 'dropped' ? 'Dropped (Lost)' : cyberStatus}
+                                </span>
+                              </td>
+                            </tr>
+
+                            {/* Expanded Row */}
+                            {isExpanded && (
+                              <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1' }}>
+                                <td colSpan={6} style={{ padding: '14px' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                    <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '4px', padding: '10px 12px' }}>
+                                      <strong style={{ color: '#1E40AF', fontSize: '11px', textTransform: 'uppercase' }}>Ground Truth (Real Situation):</strong>
+                                      <div style={{ fontSize: '12px', color: '#1E3A8A', marginTop: '2px' }}>{ev.content}</div>
+                                    </div>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                                      <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', padding: '8px', borderRadius: '4px', fontSize: '11px' }}>
+                                        <strong>Team Leader saw:</strong>
+                                        <div style={{ color: '#475569', marginTop: '2px' }}>
+                                          {variations.team_leader?.content || ev.content}
+                                        </div>
+                                      </div>
+                                      <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', padding: '8px', borderRadius: '4px', fontSize: '11px' }}>
+                                        <strong>Land Member saw:</strong>
+                                        <div style={{ color: '#475569', marginTop: '2px' }}>
+                                          {variations.land_member?.content || ev.content}
+                                        </div>
+                                      </div>
+                                      <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', padding: '8px', borderRadius: '4px', fontSize: '11px' }}>
+                                        <strong>Air Member saw:</strong>
+                                        <div style={{ color: '#475569', marginTop: '2px' }}>
+                                          {variations.air_member?.content || ev.content}
+                                        </div>
+                                      </div>
+                                      <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', padding: '8px', borderRadius: '4px', fontSize: '11px' }}>
+                                        <strong>Cyber/EW Member saw:</strong>
+                                        <div style={{ color: variations.cyber_ew_member?.deliveryBehavior === 'dropped' ? '#DC2626' : '#475569', marginTop: '2px' }}>
+                                          {variations.cyber_ew_member?.deliveryBehavior === 'dropped' ? '[Message Dropped — Lost in Jamming]' : (variations.cyber_ew_member?.content || ev.content)}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: COMMAND DECISIONS AUDIT */}
+            {activeReportTab === 'decisions' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ fontSize: '13px', color: '#475569' }}>
+                  Audited log of tactical decisions made by the squad, comparing stated rationales against the ground-truth situation.
+                </div>
+
+                {decisions.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px' }}>
+                    No decisions were recorded during this exercise session.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {decisions.map((d, index) => (
+                      <div 
+                        key={d.id || index}
+                        style={{
+                          backgroundColor: '#F8FAFC',
+                          border: '1px solid #CBD5E1',
+                          borderLeft: '4px solid var(--color-primary-navy)',
+                          padding: '14px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                          <span>Decision #{index + 1}: {d.title}</span>
+                          <span style={{ fontSize: '11px', color: 'var(--color-terracotta)', fontWeight: 'bold' }}>
+                            T+ {d.elapsedTimeFormatted || `${d.elapsedMinutes || 0} mins`}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: '13px', color: 'var(--color-text-primary)', marginTop: '6px', lineHeight: '1.5' }}>
+                          <strong>Rationale &amp; Assumptions:</strong> {d.rationale}
+                        </div>
+
+                        <div style={{ fontSize: '11px', color: '#64748B', marginTop: '8px', display: 'flex', gap: '16px', borderTop: '1px solid #E2E8F0', paddingTop: '6px' }}>
+                          <span>Operator: <strong>{d.submittedBy || 'Operator'}</strong> ({ROLE_LABELS[d.submittedRole] || d.submittedRole || 'Commander'})</span>
+                          <span>Confidence: <strong>{d.confidence || 'Medium'}</strong></span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 4: TEAM CHAT TRANSCRIPT */}
+            {activeReportTab === 'chat' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ fontSize: '13px', color: '#475569' }}>
+                  Complete transcript of team communication exchanged in the squad channel during the exercise.
+                </div>
+
+                {teamMessages.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px' }}>
+                    No team chat messages were sent during this exercise.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '420px', overflowY: 'auto' }}>
+                    {teamMessages.map((msg, index) => (
+                      <div key={msg.id || index} style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '10px 12px', fontSize: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '3px' }}>
+                          <span>
+                            {msg.senderName} <span style={{ fontSize: '10px', color: '#475569', background: '#E2E8F0', padding: '1px 5px', borderRadius: '2px' }}>[{ROLE_LABELS[msg.senderRole] || msg.senderRole}]</span>
+                          </span>
+                          <span style={{ fontSize: '10px', color: '#94A3B8' }}>
+                            {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          </span>
+                        </div>
+                        <div style={{ color: '#334155', lineHeight: '1.4' }}>{msg.text}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 5: INJECTED DISRUPTIONS */}
+            {activeReportTab === 'disruptions' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ fontSize: '13px', color: '#475569' }}>
+                  Audited log of live disruptions injected by the Instructor during this exercise session.
+                </div>
+
+                {disruptions.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px' }}>
+                    No instructor disruptions were injected during this exercise session.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: '4px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1', textAlign: 'left' }}>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Injected Time</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Target Role</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Disruption Type</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Severity</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Duration</th>
+                          <th style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {disruptions.map((dis, idx) => (
+                          <tr key={dis.id || idx} style={{ borderBottom: '1px solid #E2E8F0' }}>
+                            <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 'bold', color: '#2563EB' }}>
+                              T+ {formatSecondsToMMSS(dis.injectedAtSec || 0)}
+                            </td>
+                            <td style={{ padding: '10px 12px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                              {dis.targetLabel || TARGET_LABELS[dis.target] || dis.target}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{ fontWeight: 'bold', color: dis.disruptionType === 'restore' ? '#15803D' : '#991B1B' }}>
+                                {dis.typeLabel || DISRUPTION_TYPE_LABELS[dis.disruptionType] || dis.disruptionType}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 12px', textTransform: 'capitalize' }}>
+                              {dis.severity || 'Normal'}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              {dis.duration ? `${dis.duration}s` : 'Immediate'}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 'bold',
+                                padding: '2px 6px',
+                                borderRadius: '3px',
+                                backgroundColor: dis.status === 'Active' ? '#FEE2E2' : dis.status === 'Restored' ? '#DCFCE7' : '#F1F5F9',
+                                color: dis.status === 'Active' ? '#991B1B' : dis.status === 'Restored' ? '#15803D' : '#475569'
+                              }}>
+                                {dis.status || 'Executed'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 6: TIMELINE REPLAY PLAYER */}
             {activeReportTab === 'replay' && (
               <TimelineReplay aar={selectedAAR} />
             )}
 
-            {/* TAB 3: PARTICIPANT HISTORY */}
+            {/* TAB 7: PARTICIPANT HISTORY */}
             {activeReportTab === 'participant_history' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', backgroundColor: '#F8FAFC', padding: '10px 14px', border: '1px solid #CBD5E1' }}>
@@ -510,7 +813,7 @@ export const AfterActionReview = ({
               </div>
             )}
 
-            {/* TAB 4: COMMS ANALYSIS */}
+            {/* TAB 8: COMMS ANALYSIS */}
             {activeReportTab === 'comms_analysis' && (
               <div style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '16px' }}>
                 <h4 style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '12px' }}>
@@ -559,7 +862,7 @@ export const AfterActionReview = ({
               </div>
             )}
 
-            {/* TAB 5: PERFORMANCE SCORE */}
+            {/* TAB 9: PERFORMANCE SCORE */}
             {activeReportTab === 'score' && perfScore && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 {/* Score Hero Card */}

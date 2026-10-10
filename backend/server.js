@@ -1,3 +1,4 @@
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
@@ -6,16 +7,23 @@ import { authenticateUser, makeResolveUser, requireRole } from './middleware/aut
 import { 
   validateStateTransition, 
   evaluateScenarioEvents, 
+  evaluateParticipantDeliveredEvents,
+  generateAsymmetryMatrix,
   filterParticipantMessages, 
   DELIVERY_STATUS,
   formatSecondsToMMSS
 } from './services/simulationEngine.js';
+import { initWebSocketServer, wsManager } from './services/websocketServer.js';
 
 
 const { Pool } = pg;
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
+
+// Initialize WebSocket room manager
+initWebSocketServer(server);
 
 // Allow all origins in development. In production, restrict to the actual frontend domain.
 app.use(cors({
@@ -645,7 +653,6 @@ app.post('/api/exercises/:id/events/seed', requireRole(['instructor']), async (r
     if (exRes.rows.length === 0) {
       return res.status(404).json({ error: 'Exercise not found.' });
     }
-    const ex = exRes.rows[0];
     const snapshot = typeof ex.scenario_snapshot_json === 'string'
       ? JSON.parse(ex.scenario_snapshot_json)
       : ex.scenario_snapshot_json;
@@ -736,10 +743,12 @@ app.get('/api/exercises/:id/messages', async (req, res) => {
       ? JSON.parse(ex.scenario_snapshot_json)
       : ex.scenario_snapshot_json;
 
-    // --- AUTHORITATIVE CLOCK: use the DB's elapsed_seconds, not a browser value ---
-    const elapsed = ex.elapsed_seconds || 0;
-    // Role from X-User-Role header (already set by authenticateUser, query-param spoofing removed)
-    const userRole = effectiveRole;
+    // --- AUTHORITATIVE CLOCK: use query param if provided, otherwise DB elapsed_seconds ---
+    const elapsed = req.query.elapsedSeconds ? parseInt(req.query.elapsedSeconds, 10) : (ex.elapsed_seconds || 0);
+    // Role from query param or auth identity
+    const userRole = req.query.role || effectiveRole;
+    const sessionSeed = ex.session_code || ex.id || 'OP_FOG_DEFAULT';
+    const activeDisruptions = wsManager ? wsManager.getActiveDisruptions(ex.session_code || ex.id) : [];
 
     // Evaluate all scenario events deterministically at the authoritative elapsed time
     const scenarioEvents = snapshot?.events || [];
@@ -756,8 +765,8 @@ app.get('/api/exercises/:id/messages', async (req, res) => {
     });
     await Promise.all(persistPromises);
 
-    // Server-side role filter — dropped messages are NEVER included for participants.
-    const authorizedMessages = filterParticipantMessages(evaluatedEvents, userRole);
+    // Multi-domain information asymmetry delivered events:
+    const authorizedMessages = evaluateParticipantDeliveredEvents(scenarioEvents, userRole, elapsed, sessionSeed, activeDisruptions);
 
     res.json({
       exerciseId: ex.id,
@@ -789,6 +798,10 @@ app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async 
     }
     const ex = exRes.rows[0];
 
+    const elapsed = req.query.elapsedSeconds ? parseInt(req.query.elapsedSeconds, 10) : (ex.elapsed_seconds || 0);
+    const sessionSeed = ex.session_code || ex.id || 'OP_FOG_DEFAULT';
+    const activeDisruptions = wsManager ? wsManager.getActiveDisruptions(ex.session_code || ex.id) : [];
+
     const isFinished = ex.status === 'Completed' || ex.status === 'Reviewed';
 
     let events;
@@ -807,7 +820,6 @@ app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async 
       }));
     } else {
       // For active/paused exercises: evaluate from snapshot at current DB elapsed time.
-      const elapsed = ex.elapsed_seconds || 0;
       const snapshot = typeof ex.scenario_snapshot_json === 'string'
         ? JSON.parse(ex.scenario_snapshot_json)
         : ex.scenario_snapshot_json;
@@ -820,21 +832,28 @@ app.get('/api/exercises/:id/instructor-log', requireRole(['instructor']), async 
       }));
     }
 
+    const snapshot = typeof ex.scenario_snapshot_json === 'string'
+      ? JSON.parse(ex.scenario_snapshot_json)
+      : ex.scenario_snapshot_json;
+    const asymmetryMatrix = generateAsymmetryMatrix(snapshot?.events || [], elapsed, sessionSeed, activeDisruptions);
+
     res.json({
       exerciseId: ex.id,
-      elapsedSeconds: ex.elapsed_seconds || 0,
+      elapsedSeconds: elapsed,
       status: ex.status,
       totalEvents: events.length,
       deliveredCount: events.filter(e => e.status === DELIVERY_STATUS.DELIVERED).length,
       delayedCount: events.filter(e => e.status === DELIVERY_STATUS.DELAYED).length,
       droppedCount: events.filter(e => e.status === DELIVERY_STATUS.DROPPED).length,
       pendingCount: events.filter(e => e.status === DELIVERY_STATUS.PENDING).length,
-      events
+      events,
+      asymmetryMatrix
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch instructor audit log', details: err.message });
   }
 });
+
 
 
 // -------------------------------------------------------------
@@ -1020,6 +1039,100 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
     res.status(201).json(mapDecisionRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: 'Failed to log decision', details: err.message });
+  }
+});
+
+// Team Coordination Chat Messages
+app.get(['/api/exercises/:id/team-messages', '/api/exercises/code/:id/team-messages'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const result = await queryDB('SELECT team_messages_json FROM exercises WHERE UPPER(session_code) = UPPER($1) OR id = $1', [codeOrId]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Exercise session not found' });
+    }
+    const msgs = typeof result.rows[0].team_messages_json === 'string' 
+      ? JSON.parse(result.rows[0].team_messages_json) 
+      : (result.rows[0].team_messages_json || []);
+    res.json(msgs);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch team messages', details: err.message });
+  }
+});
+
+app.post(['/api/exercises/:id/team-messages', '/api/exercises/code/:id/team-messages'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const { text, senderId, senderName, senderRole } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'Message text is required' });
+    }
+
+    const exResult = await queryDB('SELECT id, team_messages_json FROM exercises WHERE UPPER(session_code) = UPPER($1) OR id = $1', [codeOrId]);
+    if (exResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Exercise session not found' });
+    }
+
+    const currentMsgs = typeof exResult.rows[0].team_messages_json === 'string'
+      ? JSON.parse(exResult.rows[0].team_messages_json)
+      : (exResult.rows[0].team_messages_json || []);
+
+    const newMsg = {
+      id: `msg-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      senderId: senderId || req.user?.serviceId || 'User',
+      senderName: senderName || req.user?.serviceId || 'User',
+      senderRole: senderRole || req.user?.role || 'team_leader',
+      text: text.trim(),
+      timestamp: new Date().toISOString()
+    };
+
+    const updatedMsgs = [...currentMsgs, newMsg];
+    await queryDB('UPDATE exercises SET team_messages_json = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [JSON.stringify(updatedMsgs), exResult.rows[0].id]);
+
+    res.status(201).json(newMsg);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to send team message', details: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// LIVE INSTRUCTOR DISRUPTION INJECTION & CONTROL
+// -------------------------------------------------------------
+app.get(['/api/exercises/:id/disruptions', '/api/exercises/code/:id/disruptions'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const active = wsManager.getActiveDisruptions(codeOrId);
+    const log = wsManager.getDisruptionsLog(codeOrId);
+    res.json({ activeDisruptions: active, disruptionsLog: log });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch disruptions', details: err.message });
+  }
+});
+
+app.post(['/api/exercises/:id/disruptions', '/api/exercises/code/:id/disruptions'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const { target, disruptionType, severity, duration } = req.body;
+    const result = wsManager.injectDisruption(codeOrId, {
+      target,
+      disruptionType,
+      severity,
+      duration,
+      injectedBy: req.user?.serviceId || 'instructor'
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to inject disruption', details: err.message });
+  }
+});
+
+app.post(['/api/exercises/:id/disruptions/clear', '/api/exercises/code/:id/disruptions/clear'], async (req, res) => {
+  try {
+    const codeOrId = (req.params.id || '').trim();
+    const { target } = req.body;
+    const result = wsManager.clearDisruption(codeOrId, target || 'all');
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clear disruption', details: err.message });
   }
 });
 
@@ -1357,9 +1470,10 @@ async function startServer() {
     }
   }
 
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`Operational Fog Backend API running on port ${PORT}`);
     console.log(`Health Check Endpoint: http://localhost:${PORT}/api/health`);
+    console.log(`WebSocket Endpoint: ws://localhost:${PORT}/ws`);
   });
 }
 
