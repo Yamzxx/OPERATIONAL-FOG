@@ -653,6 +653,7 @@ app.post('/api/exercises/:id/events/seed', requireRole(['instructor']), async (r
     if (exRes.rows.length === 0) {
       return res.status(404).json({ error: 'Exercise not found.' });
     }
+    const ex = exRes.rows[0];
     const snapshot = typeof ex.scenario_snapshot_json === 'string'
       ? JSON.parse(ex.scenario_snapshot_json)
       : ex.scenario_snapshot_json;

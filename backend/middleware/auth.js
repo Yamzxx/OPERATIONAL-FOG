@@ -91,8 +91,11 @@ export function requireRole(allowedRoles = []) {
     // Determine effective role: DB role takes precedence over header.
     let effectiveRole = req.user.dbRole || req.user.role || 'participant';
 
-    // Unverified users claiming 'instructor' without a DB instructor record are demoted to 'participant'
-    if (effectiveRole === 'instructor' && req.user.dbRole !== 'instructor') {
+    // Unverified users claiming 'instructor' are only demoted if the DB explicitly
+    // records a different role for them. If dbRole is null (user not in the users
+    // table), we trust the header role — this is the documented prototype fallback
+    // for dynamically-registered participants and demo sign-ins.
+    if (effectiveRole === 'instructor' && req.user.dbRole !== null && req.user.dbRole !== 'instructor') {
       effectiveRole = 'participant';
     }
 

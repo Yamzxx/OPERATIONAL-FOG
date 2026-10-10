@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Radio,
   Clock,
@@ -81,6 +81,54 @@ export const TrainingRoom = ({
   const [disruptionDuration, setDisruptionDuration] = useState('60');
 
   const engineRef = useRef(null);
+
+  // ------------------------------------------------------------------
+  // Backend-authoritative state: exercise lifecycle & clock sync
+  // ------------------------------------------------------------------
+  const [isExerciseEnded, setIsExerciseEnded] = useState(
+    session?.status === 'Completed' || session?.status === 'Reviewed'
+  );
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [backendError, setBackendError] = useState('');
+  const [exerciseStatus, setExerciseStatus] = useState(session?.status || 'In Progress');
+
+  // Ref for the periodic elapsed-seconds sync interval
+  const elapsedSyncRef = useRef(null);
+
+  // Resolve backend API base URL (Vite env var → docker default)
+  const API_BASE = (
+    typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+      ? import.meta.env.VITE_BACKEND_URL
+      : 'http://localhost:4000'
+  ) + '/api';
+
+  // Authenticated fetch wrapper — throws on non-OK responses
+  const apiFetch = useCallback(async (path, options = {}) => {
+    const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || body.message || `Request failed: ${res.status}`);
+    }
+    return res.json();
+  }, [API_BASE]);
+
+  // Build authentication headers from currentUser (mirrors backend middleware expectations)
+  const buildAuthHeaders = useCallback((user) => ({
+    'Content-Type': 'application/json',
+    ...(user?.serviceId ? { 'X-Service-Id': user.serviceId } : {}),
+    ...(user?.role    ? { 'X-User-Role': user.role }       : {})
+  }), []);
+
+  // Fire-and-forget elapsed clock sync to backend PATCH /exercises/:id/elapsed
+  const syncElapsedToBackend = useCallback((exerciseId, elapsedSeconds, user) => {
+    if (!exerciseId || elapsedSeconds === undefined) return;
+    fetch(`${API_BASE}/exercises/${exerciseId}/elapsed`, {
+      method: 'PATCH',
+      headers: buildAuthHeaders(user),
+      body: JSON.stringify({ elapsedSeconds: Math.floor(elapsedSeconds) })
+    }).catch(() => {}); // silently ignore — next sync will catch up
+  }, [API_BASE, buildAuthHeaders]);
 
   // Initialize WebSocket connection for server-side room communication
   useEffect(() => {
