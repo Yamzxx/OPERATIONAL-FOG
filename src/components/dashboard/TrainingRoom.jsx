@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Radio, 
-  Clock, 
-  Play, 
-  Pause, 
-  FastForward, 
-  Send, 
-  Square, 
-  AlertTriangle, 
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  Radio,
+  Clock,
+  Play,
+  Pause,
+  FastForward,
+  Send,
+  Square,
+  AlertTriangle,
   CheckCircle,
   X,
   HelpCircle,
@@ -29,8 +29,8 @@ import {
   Layers,
   BarChart2
 } from 'lucide-react';
-import { 
-  EventEngine, 
+import {
+  EventEngine,
   DOMAINS,
   TRAINEE_ROLES,
   ROLE_LABELS,
@@ -50,13 +50,13 @@ import { multiplayerEngine } from '../../services/multiplayerEngine';
 import { TeamCoordinationPanel } from './TeamCoordinationPanel';
 import { useToast } from '../Toast';
 
-export const TrainingRoom = ({ 
-  session, 
-  scenario, 
-  currentUser, 
-  onSaveDecision, 
-  onEndExercise, 
-  existingDecisions = [] 
+export const TrainingRoom = ({
+  session,
+  scenario,
+  currentUser,
+  onSaveDecision,
+  onEndExercise,
+  existingDecisions = []
 }) => {
   const { showToast } = useToast();
 
@@ -100,6 +100,54 @@ export const TrainingRoom = ({
   const [disruptionDuration, setDisruptionDuration] = useState('60');
 
   const engineRef = useRef(null);
+
+  // ------------------------------------------------------------------
+  // Backend-authoritative state: exercise lifecycle & clock sync
+  // ------------------------------------------------------------------
+  const [isExerciseEnded, setIsExerciseEnded] = useState(
+    session?.status === 'Completed' || session?.status === 'Reviewed'
+  );
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [backendError, setBackendError] = useState('');
+  const [exerciseStatus, setExerciseStatus] = useState(session?.status || 'In Progress');
+
+  // Ref for the periodic elapsed-seconds sync interval
+  const elapsedSyncRef = useRef(null);
+
+  // Resolve backend API base URL (Vite env var → docker default)
+  const API_BASE = (
+    typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+      ? import.meta.env.VITE_BACKEND_URL
+      : 'http://localhost:4000'
+  ) + '/api';
+
+  // Authenticated fetch wrapper — throws on non-OK responses
+  const apiFetch = useCallback(async (path, options = {}) => {
+    const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || body.message || `Request failed: ${res.status}`);
+    }
+    return res.json();
+  }, [API_BASE]);
+
+  // Build authentication headers from currentUser (mirrors backend middleware expectations)
+  const buildAuthHeaders = useCallback((user) => ({
+    'Content-Type': 'application/json',
+    ...(user?.serviceId ? { 'X-Service-Id': user.serviceId } : {}),
+    ...(user?.role    ? { 'X-User-Role': user.role }       : {})
+  }), []);
+
+  // Fire-and-forget elapsed clock sync to backend PATCH /exercises/:id/elapsed
+  const syncElapsedToBackend = useCallback((exerciseId, elapsedSeconds, user) => {
+    if (!exerciseId || elapsedSeconds === undefined) return;
+    fetch(`${API_BASE}/exercises/${exerciseId}/elapsed`, {
+      method: 'PATCH',
+      headers: buildAuthHeaders(user),
+      body: JSON.stringify({ elapsedSeconds: Math.floor(elapsedSeconds) })
+    }).catch(() => {}); // silently ignore — next sync will catch up
+  }, [API_BASE, buildAuthHeaders]);
 
   // Initialize WebSocket connection for server-side room communication
   useEffect(() => {
@@ -200,20 +248,131 @@ export const TrainingRoom = ({
     return () => clearInterval(interval);
   }, [engineState.isPaused, speedMultiplier]);
 
-  const handlePauseToggle = () => {
-    if (!engineRef.current) return;
-    if (engineState.isPaused) {
-      engineRef.current.resume();
+  // ------------------------------------------------------------------
+  // Periodic backend clock sync — every 15 seconds while running
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (elapsedSyncRef.current) clearInterval(elapsedSyncRef.current);
+
+    if (!isExerciseEnded && engineRef.current?.isRunning && !engineState.isPaused) {
+      elapsedSyncRef.current = setInterval(() => {
+        if (session?.id && engineRef.current) {
+          syncElapsedToBackend(session.id, engineRef.current.elapsedSeconds, currentUser);
+        }
+      }, 15000);
+    }
+
+    return () => {
+      if (elapsedSyncRef.current) clearInterval(elapsedSyncRef.current);
+    };
+  }, [isExerciseEnded, engineState.isPaused, session?.id]);
+
+  // ------------------------------------------------------------------
+  // PAUSE / RESUME — backend authoritative
+  // ------------------------------------------------------------------
+
+  const handlePauseToggle = useCallback(async () => {
+    if (!engineRef.current || isTransitioning) return;
+
+    const isRunning = engineRef.current.isRunning;
+    const isPaused = engineState.isPaused;
+
+    // Start the exercise if it has not started yet.
+    if (!isRunning) {
+      engineRef.current.start();
+
+      // Synchronize the start with other participants.
       if (session?.sessionCode) {
-        multiplayerEngine.setPauseState(session.sessionCode, false);
+        multiplayerEngine.startExercise(session.sessionCode);
       }
+
+      // Save the initial status to the backend.
+      if (isInstructor && session?.id) {
+        setIsTransitioning(true);
+        setBackendError('');
+
+        try {
+          const updated = await apiFetch(
+            `/exercises/${session.id}/transition`,
+            {
+              method: 'POST',
+              headers: buildAuthHeaders(currentUser),
+              body: JSON.stringify({
+                targetStatus: 'In Progress',
+                elapsedSeconds: 0
+              })
+            }
+          );
+
+          setExerciseStatus(updated.status);
+          setLiveSession(prev => ({ ...prev, ...updated }));
+        } catch (err) {
+          setBackendError(err.message);
+          showToast(err.message, 'error');
+        } finally {
+          setIsTransitioning(false);
+        }
+      }
+
+      return;
+    }
+
+    const targetStatus = isPaused ? 'In Progress' : 'Paused';
+
+    // Update the local simulation immediately.
+    if (isPaused) {
+      engineRef.current.resume();
     } else {
       engineRef.current.pause();
-      if (session?.sessionCode) {
-        multiplayerEngine.setPauseState(session.sessionCode, true);
+    }
+
+    // Synchronize pause/resume with other participants.
+    if (session?.sessionCode) {
+      multiplayerEngine.setPauseState(session.sessionCode, !isPaused);
+    }
+
+    // Persist the updated status to the backend.
+    if (isInstructor && session?.id) {
+      setIsTransitioning(true);
+      setBackendError('');
+
+      try {
+        const updated = await apiFetch(
+          `/exercises/${session.id}/transition`,
+          {
+            method: 'POST',
+            headers: buildAuthHeaders(currentUser),
+            body: JSON.stringify({
+              targetStatus,
+              elapsedSeconds: engineRef.current?.elapsedSeconds || 0
+            })
+          }
+        );
+
+        setExerciseStatus(updated.status);
+        setLiveSession(prev => ({ ...prev, ...updated }));
+      } catch (err) {
+        // Restore the previous engine state if the backend rejects the change.
+        if (isPaused) {
+          engineRef.current.pause();
+        } else {
+          engineRef.current.resume();
+        }
+
+        setBackendError(err.message);
+        showToast(err.message, 'error');
+      } finally {
+        setIsTransitioning(false);
       }
     }
-  };
+  }, [
+    engineState.isPaused,
+    isTransitioning,
+    isInstructor,
+    session,
+    currentUser,
+    showToast
+  ]);
 
   const handleStepForward = () => {
     if (engineRef.current) {
@@ -452,9 +611,9 @@ export const TrainingRoom = ({
 
   return (
     <div style={{ minHeight: 'calc(100vh - 64px)', backgroundColor: '#F8FAFC', display: 'flex', flexDirection: 'column' }}>
-      
+
       {/* 1. TOP HEADER BAR (CLEAN & SLEEK) */}
-      <div 
+      <div
         style={{
           backgroundColor: '#0F172A',
           color: '#FFFFFF',
@@ -486,7 +645,7 @@ export const TrainingRoom = ({
 
         {/* Center / Right: Controls & Timer */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          
+
           {/* Timer Clock */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1E293B', padding: '6px 12px', borderRadius: '4px', border: '1px solid #334155', fontFamily: 'monospace', fontWeight: 'bold', fontSize: '14px', color: '#FBBF24' }}>
             <Clock size={15} />
@@ -495,16 +654,18 @@ export const TrainingRoom = ({
 
           {/* Play/Pause & Speed Buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#1E293B', padding: '4px 8px', borderRadius: '4px', border: '1px solid #334155' }}>
-            <button 
-              onClick={handlePauseToggle} 
-              style={{ background: 'none', border: 'none', color: engineState.isPaused ? '#FBBF24' : '#4ADE80', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }}
-              title={engineState.isPaused ? 'Resume Simulation' : 'Pause Simulation'}
+            <button
+              onClick={handlePauseToggle}
+              disabled={isTransitioning || isExerciseEnded}
+              style={{ background: 'none', border: 'none', color: !engineState.isRunning ? '#4ADE80' : engineState.isPaused ? '#FBBF24' : '#4ADE80', cursor: isTransitioning || isExerciseEnded ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '4px', opacity: isTransitioning ? 0.5 : 1, padding: '4px' }}
+              title={isTransitioning ? 'Updating...' : !engineState.isRunning ? 'Start Exercise' : engineState.isPaused ? 'Resume Simulation' : 'Pause Simulation'}
             >
-              {engineState.isPaused ? <Play size={16} fill="#FBBF24" /> : <Pause size={16} fill="#4ADE80" />}
+              {isTransitioning ? <RefreshCw size={16} className="animate-spin" /> : (!engineState.isRunning || engineState.isPaused) ? <Play size={16} fill={engineState.isPaused ? '#FBBF24' : undefined} /> : <Pause size={16} fill="#4ADE80" />}
+              {!engineState.isRunning && <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#4ADE80' }}>START</span>}
             </button>
 
-            <button 
-              onClick={handleStepForward} 
+            <button
+              onClick={handleStepForward}
               style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }}
               title="Fast forward 5 seconds"
             >
@@ -568,7 +729,7 @@ export const TrainingRoom = ({
           )}
 
           {/* Finish Exercise Button */}
-          <button 
+          <button
             onClick={() => setShowEndModal(true)}
             style={{
               backgroundColor: '#DC2626',
@@ -591,13 +752,13 @@ export const TrainingRoom = ({
       </div>
 
       {/* 2. SUB-HEADER / STATUS STRIP */}
-      <div 
-        style={{ 
-          backgroundColor: '#FFFFFF', 
-          borderBottom: '1px solid #E2E8F0', 
-          padding: '10px 24px', 
-          display: 'flex', 
-          justifyContent: 'space-between', 
+      <div
+        style={{
+          backgroundColor: '#FFFFFF',
+          borderBottom: '1px solid #E2E8F0',
+          padding: '10px 24px',
+          display: 'flex',
+          justifyContent: 'space-between',
           alignItems: 'center',
           flexWrap: 'wrap',
           gap: '12px'
@@ -607,13 +768,13 @@ export const TrainingRoom = ({
           {/* Active Role Badge */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '12px', color: '#64748B' }}>Your Role:</span>
-            <span 
-              style={{ 
-                fontSize: '12px', 
-                fontWeight: 'bold', 
-                backgroundColor: '#1E293B', 
-                color: '#FFF', 
-                padding: '3px 10px', 
+            <span
+              style={{
+                fontSize: '12px',
+                fontWeight: 'bold',
+                backgroundColor: '#1E293B',
+                color: '#FFF',
+                padding: '3px 10px',
                 borderRadius: '4px',
                 display: 'flex',
                 alignItems: 'center',
@@ -633,8 +794,8 @@ export const TrainingRoom = ({
           {isInstructor && activeTab === 'participant' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ fontSize: '12px', color: '#64748B' }}>Preview Role:</span>
-              <select 
-                value={previewRole} 
+              <select
+                value={previewRole}
                 onChange={(e) => setPreviewRole(e.target.value)}
                 style={{ padding: '3px 8px', fontSize: '12px', border: '1px solid #CBD5E1', borderRadius: '4px', fontWeight: 'bold' }}
               >
@@ -667,10 +828,10 @@ export const TrainingRoom = ({
         /* TRAINEE EXERCISE SCREEN (Clean & Simple: Feed, Chat, Decision)             */
         /* ========================================================================= */
         <div style={{ padding: '20px 24px', flexGrow: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-          
+
           {/* Left Panel: Received Messages Feed */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            
+
             {/* Mission Goal Box */}
             <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '14px 18px', borderLeft: '4px solid #2563EB' }}>
               <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#2563EB', textTransform: 'uppercase', marginBottom: '2px' }}>
@@ -716,7 +877,7 @@ export const TrainingRoom = ({
                   {participantMessages.map((ev, index) => {
                     const domainStyle = getDomainBadgeStyle(ev.domain);
                     return (
-                      <div 
+                      <div
                         key={ev.deliveredId || ev.id || index}
                         style={{
                           backgroundColor: ev.isConflicting ? '#FFFBEB' : (ev.isTruncated ? '#FEF2F2' : '#FFFFFF'),
@@ -780,9 +941,9 @@ export const TrainingRoom = ({
 
           {/* Right Panel: Team Chat & Decision Console */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            
+
             {/* Team Chat Panel */}
-            <TeamCoordinationPanel 
+            <TeamCoordinationPanel
               session={liveSession}
               currentUser={currentUser}
               onSendTeamMessage={handleSendTeamMessage}
@@ -1136,7 +1297,7 @@ export const TrainingRoom = ({
         /* INSTRUCTOR LIVE VIEW — INFORMATION ASYMMETRY DELIVERY MATRIX              */
         /* ========================================================================= */
         <div style={{ padding: '24px', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          
+
           {/* Plain English Instructor Orientation Card */}
           <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px', borderLeft: '4px solid #2563EB', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
             <div>
@@ -1259,18 +1420,18 @@ export const TrainingRoom = ({
                 <button
                   type="submit"
                   className="gov-btn gov-btn-primary"
-                  style={{ 
-                    padding: '8px 22px', 
-                    fontSize: '13px', 
-                    fontWeight: 'bold', 
-                    backgroundColor: disruptionType === 'restore' ? '#15803D' : '#DC2626', 
-                    color: '#FFFFFF', 
-                    border: 'none', 
-                    borderRadius: '4px', 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '6px' 
+                  style={{
+                    padding: '8px 22px',
+                    fontSize: '13px',
+                    fontWeight: 'bold',
+                    backgroundColor: disruptionType === 'restore' ? '#15803D' : '#DC2626',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
                   }}
                 >
                   <Zap size={14} />
@@ -1519,9 +1680,9 @@ export const TrainingRoom = ({
 
                     return (
                       <React.Fragment key={row.eventId}>
-                        <tr 
+                        <tr
                           onClick={() => setExpandedEventId(isExpanded ? null : row.eventId)}
-                          style={{ 
+                          style={{
                             borderBottom: '1px solid #E2E8F0',
                             backgroundColor: isExpanded ? '#EFF6FF' : '#FFFFFF',
                             cursor: 'pointer',
@@ -1591,7 +1752,7 @@ export const TrainingRoom = ({
                           <tr style={{ backgroundColor: '#F8FAFC', borderBottom: '2px solid #CBD5E1' }}>
                             <td colSpan={7} style={{ padding: '16px 20px' }}>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                
+
                                 {/* Actual Truth Card */}
                                 <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '4px', padding: '12px 14px' }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
@@ -1609,7 +1770,7 @@ export const TrainingRoom = ({
 
                                 {/* Participant Variations Comparison Grid */}
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
-                                  
+
                                   {/* Team Leader */}
                                   <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '10px 12px' }}>
                                     <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-primary-navy)', marginBottom: '4px' }}>
@@ -1833,15 +1994,15 @@ export const TrainingRoom = ({
                 <button className="gov-btn gov-btn-secondary" onClick={() => setShowEndModal(false)}>
                   Continue Exercise
                 </button>
-                <button 
-                  className="gov-btn" 
+                <button
+                  className="gov-btn"
                   style={{ backgroundColor: '#DC2626', color: '#FFF' }}
                   onClick={() => {
                     setShowEndModal(false);
                     onEndExercise(
-                      liveSession || session, 
-                      decisions, 
-                      Math.ceil(engineState.elapsedSeconds / 60), 
+                      liveSession || session,
+                      decisions,
+                      Math.ceil(engineState.elapsedSeconds / 60),
                       groundTruthEvents,
                       asymmetryMatrix,
                       liveSession?.teamMessages || session?.teamMessages || [],
