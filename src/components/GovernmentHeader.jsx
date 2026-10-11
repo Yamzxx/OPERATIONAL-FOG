@@ -11,9 +11,12 @@ export const GovernmentHeader = () => {
       <div className="gov-container">
         <div className="gov-header-inner">
           <div className="gov-identity">
-            <NationalEmblem height={68} />
-            <div style={{ height: '52px', width: '1px', backgroundColor: '#CBD5E1', margin: '0 4px' }}></div>
-            <IndianFlag width={30} height={20} />
+            <div className="gov-emblem-flag-group">
+              <NationalEmblem height={60} />
+              <IndianFlag width={36} height={24} />
+            </div>
+            
+            <div className="gov-header-separator" />
             
             <div className="gov-title-group">
               <span className="gov-title-org">{t('defence_crisis_training_system', 'Defences & Crisis Training Simulation System')}</span>
