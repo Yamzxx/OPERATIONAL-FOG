@@ -523,19 +523,51 @@ export function generateAsymmetryMatrix(eventsList, elapsedSeconds = 0, sessionS
 export function filterParticipantMessages(evaluatedEvents, userRole = 'all') {
   return evaluateParticipantDeliveredEvents(evaluatedEvents, userRole, 99999);
 }
-
-/**
- * Checks if an event is a structured Decision Point.
- */
 export function isDecisionEvent(ev) {
   if (!ev) return false;
+  const t = (ev.type || ev.eventType || ev.event_type || '').toUpperCase();
   return (
     ev.requiresDecision === true ||
     ev.isDecisionPoint === true ||
-    ev.type === 'decision' ||
-    ev.eventType === 'decision' ||
-    ev.event_type === 'decision'
+    t === 'DECISION' ||
+    t === 'DECISION_REQUIRED' ||
+    t === 'DECISION_POINT'
   );
+}
+
+/**
+ * Resolves target roles array from a decision event / decision point.
+ * Checks ev.targetRoles (array) or falls back to ev.targetRole (string) or ev.intendedRecipient.
+ */
+export function getDecisionTargetRoles(ev) {
+  if (!ev) return [];
+  if (Array.isArray(ev.targetRoles) && ev.targetRoles.length > 0) {
+    return ev.targetRoles.map(r => normalizeRole(r));
+  }
+  if (ev.targetRole) {
+    return [normalizeRole(ev.targetRole)];
+  }
+  if (ev.intendedRecipient) {
+    return [normalizeRole(ev.intendedRecipient)];
+  }
+  return [];
+}
+
+/**
+ * Checks if a specific role is allowed to submit / view decision form for a decision point.
+ * Returns true if:
+ * - targetRoles includes 'all'
+ * - targetRoles is empty (unrestricted)
+ * - targetRoles includes normalized user role
+ * - user is instructor (instructors can preview/supervise)
+ */
+export function isRoleAllowedForDecision(ev, role) {
+  if (!ev) return false;
+  const normRole = normalizeRole(role);
+  if (normRole === TRAINEE_ROLES.INSTRUCTOR) return true;
+  const targets = getDecisionTargetRoles(ev);
+  if (targets.length === 0 || targets.includes('all')) return true;
+  return targets.includes(normRole);
 }
 
 /**

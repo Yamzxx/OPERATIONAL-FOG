@@ -8,8 +8,11 @@ import {
   calculateInformationAvailability, 
   calculateSharedAwareness, 
   createEvidenceSnapshot,
+  getDecisionTargetRoles,
+  isRoleAllowedForDecision,
   TRAINEE_ROLES 
 } from './eventEngine.js';
+import { multiplayerEngine } from './multiplayerEngine.js';
 import { ServerWebSocketManager } from '../../backend/services/websocketServer.js';
 
 // Sample multi-domain scenario with a DECISION_REQUIRED event
@@ -56,6 +59,7 @@ const testScenario = {
       type: 'DECISION_REQUIRED',
       domain: 'JOINT',
       deliveryBehavior: 'normal',
+      targetRoles: ['team_leader'],
       targetRole: 'team_leader',
       deadlineSeconds: 90,
       decisionOptions: [
@@ -329,6 +333,186 @@ test('Real-time Instructor Synchronization - Broadcasts DECISION_SUBMITTED over 
     instructorClient.close();
     traineeClient.close();
     outsiderClient.close();
+    server.close();
+  }
+});
+
+test('Decision Form Role Access - targetRoles allows Team Leader and isolates Land / Air / Cyber-EW', () => {
+  const sihDecisionPoint = {
+    id: 'sih-ev-dp-1',
+    title: 'DECISION REQUIRED: Convoy Movement Directive',
+    type: 'DECISION_REQUIRED',
+    requiresDecision: true,
+    targetRoles: ['team_leader']
+  };
+
+  assert.deepStrictEqual(getDecisionTargetRoles(sihDecisionPoint), ['team_leader']);
+
+  // 1. Team Leader is allowed
+  assert.strictEqual(isRoleAllowedForDecision(sihDecisionPoint, 'team_leader'), true, 'Team Leader is authorized');
+
+  // 2. Land Member is NOT allowed
+  assert.strictEqual(isRoleAllowedForDecision(sihDecisionPoint, 'land_member'), false, 'Land Member is rejected');
+
+  // 3. Air and Cyber-EW Members are NOT allowed
+  assert.strictEqual(isRoleAllowedForDecision(sihDecisionPoint, 'air_member'), false, 'Air Member is rejected');
+  assert.strictEqual(isRoleAllowedForDecision(sihDecisionPoint, 'cyber_ew_member'), false, 'Cyber/EW Member is rejected');
+
+  // 4. Preserve support for future role-specific decision points (not globally hard-coded to Team Leader)
+  const landSpecificDecisionPoint = {
+    id: 'future-land-dp-1',
+    title: 'DECISION REQUIRED: Field Scout Breach Route',
+    type: 'DECISION_REQUIRED',
+    targetRoles: ['land_member']
+  };
+
+  assert.strictEqual(isRoleAllowedForDecision(landSpecificDecisionPoint, 'land_member'), true, 'Land Member is authorized for Land-targeted decision');
+  assert.strictEqual(isRoleAllowedForDecision(landSpecificDecisionPoint, 'team_leader'), false, 'Team Leader is NOT authorized for Land-only decision');
+});
+
+test('Decision Submission Authorization - Team Leader can submit and Land Member cannot submit same decision point', async () => {
+  const sessionCode = `TEST-DEC-AUTH-${Date.now()}`;
+  await multiplayerEngine.createSession({
+    scenario: testScenario,
+    sessionName: 'Auth Test Session',
+    creatorServiceId: 'Leader-01',
+    creatorRole: 'team_leader',
+    sessionCode
+  });
+
+  const sihDecisionData = {
+    id: `dec-auth-test-1`,
+    decisionPointId: 'sih-ev-dp-1',
+    targetRoles: ['team_leader'],
+    title: 'Hold Convoy Bravo in cover',
+    rationale: 'Scout reports tree blockage. Awaiting route clearance before moving.',
+    confidence: '80%',
+    submittedBy: 'Leader-01',
+    submittedRole: 'team_leader'
+  };
+
+  // 1. Team Leader submission succeeds
+  const leaderResult = multiplayerEngine.submitDecision(sessionCode, sihDecisionData);
+  assert.ok(leaderResult, 'Team Leader decision submission returned result');
+  assert.strictEqual(leaderResult.rejected, undefined, 'Team Leader submission was NOT rejected');
+  assert.strictEqual(leaderResult.title, 'Hold Convoy Bravo in cover');
+
+  const sessionAfterLeader = multiplayerEngine.getSessionByCode(sessionCode);
+  assert.strictEqual(sessionAfterLeader.decisions.length, 1, 'Decision logged in session decisions');
+
+  // 2. Land Member attempts to submit the same decision point
+  const landDecisionData = {
+    id: `dec-auth-test-2`,
+    decisionPointId: 'sih-ev-dp-1',
+    targetRoles: ['team_leader'],
+    title: 'Advance Without Clearance',
+    rationale: 'Unilateral decision by ground scout.',
+    confidence: '50%',
+    submittedBy: 'Land-01',
+    submittedRole: 'land_member'
+  };
+
+  const landResult = multiplayerEngine.submitDecision(sessionCode, landDecisionData);
+  assert.ok(landResult.rejected, 'Land Member submission was rejected');
+  assert.ok(landResult.error.includes('Forbidden'), 'Error message contains Forbidden');
+
+  // Decision count remains 1 (Land Member submission was blocked)
+  const sessionAfterLand = multiplayerEngine.getSessionByCode(sessionCode);
+  assert.strictEqual(sessionAfterLand.decisions.length, 1, 'Land Member submission was blocked from session decisions');
+});
+
+test('WebSocket DECISION_SUBMITTED Enforcement - Rejects Land Member submission when targetRoles specifies team_leader', async () => {
+  const server = http.createServer();
+  const wsManager = new ServerWebSocketManager();
+  wsManager.init(server);
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const wsUrl = `ws://127.0.0.1:${port}/ws`;
+
+  const createClient = () => {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(wsUrl);
+      ws.on('open', () => resolve(ws));
+      ws.on('error', reject);
+    });
+  };
+
+  const landClient = await createClient();
+  const leaderClient = await createClient();
+
+  try {
+    const roomCode = 'ROOM-ROLE-AUTH-TEST';
+
+    landClient.send(JSON.stringify({
+      type: 'JOIN_ROOM',
+      payload: { sessionCode: roomCode, role: 'land_member', displayName: 'Land Scout' }
+    }));
+
+    leaderClient.send(JSON.stringify({
+      type: 'JOIN_ROOM',
+      payload: { sessionCode: roomCode, role: 'team_leader', displayName: 'Team Leader' }
+    }));
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    const landReceived = [];
+    landClient.on('message', (d) => landReceived.push(JSON.parse(d.toString())));
+
+    const leaderReceived = [];
+    leaderClient.on('message', (d) => leaderReceived.push(JSON.parse(d.toString())));
+
+    // Land Member sends unauthorized decision for team_leader targetRoles
+    landClient.send(JSON.stringify({
+      type: 'DECISION_SUBMITTED',
+      payload: {
+        sessionCode: roomCode,
+        decision: {
+          id: 'dec-illegal-1',
+          decisionPointId: 'sih-ev-dp-1',
+          targetRoles: ['team_leader'],
+          title: 'Unauthorized Action',
+          submittedRole: 'land_member',
+          submittedBy: 'Land-01'
+        }
+      }
+    }));
+
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Assert Land Member received ERROR
+    const errorMsg = landReceived.find(m => m.type === 'ERROR' && m.code === 'FORBIDDEN_DECISION_ROLE');
+    assert.ok(errorMsg, 'Land Member received FORBIDDEN_DECISION_ROLE error over WebSocket');
+
+    // Assert Leader did NOT receive DECISION_SUBMITTED broadcast from unauthorized Land Member
+    const leakedDec = leaderReceived.find(m => m.type === 'DECISION_SUBMITTED' && m.payload?.decision?.id === 'dec-illegal-1');
+    assert.strictEqual(leakedDec, undefined, 'Unauthorized decision was NOT broadcast to room');
+
+    // Team Leader sends authorized decision
+    leaderClient.send(JSON.stringify({
+      type: 'DECISION_SUBMITTED',
+      payload: {
+        sessionCode: roomCode,
+        decision: {
+          id: 'dec-authorized-1',
+          decisionPointId: 'sih-ev-dp-1',
+          targetRoles: ['team_leader'],
+          title: 'Authorized Directive',
+          submittedRole: 'team_leader',
+          submittedBy: 'Leader-01'
+        }
+      }
+    }));
+
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Assert Land Member received authorized DECISION_SUBMITTED broadcast from Team Leader
+    const authBroadcast = landReceived.find(m => m.type === 'DECISION_SUBMITTED' && m.payload?.decision?.id === 'dec-authorized-1');
+    assert.ok(authBroadcast, 'Authorized decision was broadcast to room members');
+  } finally {
+    landClient.close();
+    leaderClient.close();
+    wsManager.close();
     server.close();
   }
 });

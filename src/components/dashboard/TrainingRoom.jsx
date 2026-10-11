@@ -42,7 +42,9 @@ import {
   isDecisionEvent,
   calculateInformationAvailability,
   calculateSharedAwareness,
-  createEvidenceSnapshot
+  createEvidenceSnapshot,
+  getDecisionTargetRoles,
+  isRoleAllowedForDecision
 } from '../../services/eventEngine';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 import { TeamCoordinationPanel } from './TeamCoordinationPanel';
@@ -232,18 +234,34 @@ export const TrainingRoom = ({
     return !decisions.some(d => (d.decisionPointId === dp.id) || (d.title === dp.title));
   });
 
-  const isTargetForDecision = activeDecisionPoint ? (() => {
-    const target = normalizeRole(activeDecisionPoint.targetRole || activeDecisionPoint.intendedRecipient || 'team_leader');
-    return target === 'all' || target === userRole || userRole === TRAINEE_ROLES.TEAM_LEADER;
-  })() : true;
-
   const currentViewRole = isInstructor && activeTab === 'participant' ? previewRole : userRole;
+
+  // Next or active decision point to determine role access
+  const relevantDecisionPoint = activeDecisionPoint || scenarioEvents.find(isDecisionEvent);
+
+  const isTargetForDecision = relevantDecisionPoint
+    ? isRoleAllowedForDecision(relevantDecisionPoint, currentViewRole)
+    : (currentViewRole === TRAINEE_ROLES.TEAM_LEADER);
+
+  const decisionTargetRoles = relevantDecisionPoint 
+    ? getDecisionTargetRoles(relevantDecisionPoint) 
+    : ['team_leader'];
+
+  const targetRoleLabels = decisionTargetRoles.map(r => ROLE_LABELS[normalizeRole(r)] || r).join(' / ');
+  const awaitingMessage = decisionTargetRoles.includes('team_leader')
+    ? "Awaiting Team Leader Decision — share your domain updates through Team Chat."
+    : `Awaiting ${targetRoleLabels} Decision — share your domain updates through Team Chat.`;
+
   const participantMessages = engineRef.current 
     ? engineRef.current.getParticipantMessages(currentViewRole) 
     : [];
 
   const handleDecisionSubmit = (e) => {
     e.preventDefault();
+    if (!isTargetForDecision) {
+      showToast('You are not authorized to submit this decision.', 'error');
+      return;
+    }
     const finalTitle = (selectedOption && selectedOption !== '__custom__')
       ? selectedOption
       : decisionTitle.trim();
@@ -291,10 +309,12 @@ export const TrainingRoom = ({
 
     const newDecision = {
       id: `dec-${Date.now()}`,
-      decisionPointId: activeDecisionPoint?.id || null,
+      decisionPointId: activeDecisionPoint?.id || relevantDecisionPoint?.id || null,
+      targetRoles: decisionTargetRoles,
       title: finalTitle,
       rationale: rationale.trim(),
       confidence: `${confidencePercent}%`,
+      confidencePercent,
       timestamp: new Date().toISOString(),
       elapsedMinutes: Math.floor(engineState.elapsedSeconds / 60),
       elapsedSeconds: engineState.elapsedSeconds,
@@ -769,62 +789,85 @@ export const TrainingRoom = ({
             />
 
             {/* Decision Submission Box & Structured Decision Point */}
-            <div style={{ backgroundColor: '#FFF', border: activeDecisionPoint && isTargetForDecision ? '2px solid #2563EB' : '1px solid #E2E8F0', borderRadius: '6px', padding: '18px', boxShadow: activeDecisionPoint && isTargetForDecision ? '0 0 0 3px rgba(37,99,235,0.1)' : 'none' }}>
-              
-              {/* If a scenario decision point is active and targeted at this role */}
-              {activeDecisionPoint ? (
-                isTargetForDecision ? (
-                  <div style={{ marginBottom: '14px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ backgroundColor: '#DC2626', color: '#FFF', fontSize: '11px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          ⚡ DECISION REQUIRED
-                        </span>
-                        <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 'bold' }}>
-                          Triggered T+{activeDecisionPoint.time}
-                        </span>
-                      </div>
-                      {activeDecisionPoint.deadlineSeconds && (
-                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', padding: '2px 8px', borderRadius: '4px' }}>
-                          ⏱️ Deadline: {Math.max(0, (parseTimeToSeconds(activeDecisionPoint.time) + activeDecisionPoint.deadlineSeconds) - engineState.elapsedSeconds)}s remaining
-                        </div>
-                      )}
-                    </div>
-
-                    <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '0 0 6px' }}>
-                      {activeDecisionPoint.title}
-                    </h3>
-                    <p style={{ fontSize: '13px', color: '#334155', margin: 0, lineHeight: '1.4', background: '#F8FAFC', padding: '10px 12px', borderRadius: '4px', borderLeft: '3px solid #2563EB' }}>
-                      {activeDecisionPoint.decisionPrompt || activeDecisionPoint.content}
-                    </p>
+            <div 
+              id="decision-console-panel"
+              style={{ 
+                backgroundColor: '#FFF', 
+                border: activeDecisionPoint && isTargetForDecision ? '2px solid #2563EB' : '1px solid #E2E8F0', 
+                borderRadius: '6px', 
+                padding: '18px', 
+                boxShadow: activeDecisionPoint && isTargetForDecision ? '0 0 0 3px rgba(37,99,235,0.1)' : 'none' 
+              }}
+            >
+              {!isTargetForDecision ? (
+                /* Non-targeted role: Form hidden, awaiting directive notice shown */
+                <div 
+                  id="awaiting-decision-notice"
+                  style={{ 
+                    backgroundColor: '#FEF3C7', 
+                    border: '1px solid #FCD34D', 
+                    borderRadius: '6px', 
+                    padding: '16px 18px', 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    gap: '8px' 
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#92400E', fontWeight: 'bold', fontSize: '13px' }}>
+                    <Clock size={16} />
+                    <span>{activeDecisionPoint ? `Decision Required: ${activeDecisionPoint.title}` : 'Tactical Command Status'}</span>
                   </div>
-                ) : (
-                  <div style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: '4px', padding: '12px', marginBottom: '14px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#92400E', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Clock size={14} />
-                      <span>Awaiting Command Directive from Team Leader</span>
+                  <p style={{ margin: 0, fontSize: '13px', color: '#78350F', lineHeight: '1.4', fontWeight: '500' }}>
+                    {awaitingMessage}
+                  </p>
+                  {activeDecisionPoint && (
+                    <div style={{ fontSize: '12px', color: '#92400E', background: '#FFFBEB', padding: '8px 10px', borderRadius: '4px', border: '1px solid #FDE68A', marginTop: '4px' }}>
+                      <strong>Directive Prompt:</strong> {activeDecisionPoint.decisionPrompt || activeDecisionPoint.content}
                     </div>
-                    <div style={{ fontSize: '12px', color: '#78350F', marginTop: '4px' }}>
-                      Tactical Decision Point: <strong>{activeDecisionPoint.title}</strong> is active. You have shared your reconnaissance updates in Team Chat.
-                    </div>
-                  </div>
-                )
-              ) : (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <div>
-                    <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
-                      Record Command Decision
-                    </h3>
-                    <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
-                      Document what action you decide to take based on the information you have.
-                    </div>
-                  </div>
+                  )}
                 </div>
-              )}
+              ) : (
+                /* Targeted role (e.g. Team Leader): Show Decision Required / Command form */
+                <>
+                  {activeDecisionPoint ? (
+                    <div style={{ marginBottom: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ backgroundColor: '#DC2626', color: '#FFF', fontSize: '11px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            ⚡ DECISION REQUIRED
+                          </span>
+                          <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 'bold' }}>
+                            Triggered T+{activeDecisionPoint.time}
+                          </span>
+                        </div>
+                        {activeDecisionPoint.deadlineSeconds && (
+                          <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', padding: '2px 8px', borderRadius: '4px' }}>
+                            ⏱️ Deadline: {Math.max(0, (parseTimeToSeconds(activeDecisionPoint.time) + activeDecisionPoint.deadlineSeconds) - engineState.elapsedSeconds)}s remaining
+                          </div>
+                        )}
+                      </div>
 
-              {/* Only show form if there's no active decision point or if this role is the target */}
-              {(!activeDecisionPoint || isTargetForDecision) && (
-                <form onSubmit={handleDecisionSubmit}>
+                      <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '0 0 6px' }}>
+                        {activeDecisionPoint.title}
+                      </h3>
+                      <p style={{ fontSize: '13px', color: '#334155', margin: 0, lineHeight: '1.4', background: '#F8FAFC', padding: '10px 12px', borderRadius: '4px', borderLeft: '3px solid #2563EB' }}>
+                        {activeDecisionPoint.decisionPrompt || activeDecisionPoint.content}
+                      </p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <div>
+                        <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
+                          Record Command Decision
+                        </h3>
+                        <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                          Document what action you decide to take based on the information you have.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleDecisionSubmit}>
                   {/* Step 1: Information Sources Used (checkboxes of received messages) */}
                   <div style={{ marginBottom: '12px', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '10px 12px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
@@ -1045,8 +1088,9 @@ export const TrainingRoom = ({
                     </button>
                   </div>
                 </form>
-              )}
-            </div>
+              </>
+            )}
+          </div>
 
             {/* Past Decisions Recorded List */}
             <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '16px', flexGrow: 1 }}>

@@ -761,7 +761,6 @@ export class EventEngine {
       disruptionsLog: [...this.disruptionsLog]
     };
   }
-
   /**
    * Returns active decision events that have triggered at or before current elapsed time.
    */
@@ -770,8 +769,7 @@ export class EventEngine {
     const normRole = normalizeRole(userRole);
     return this.generatedEvents.filter(ev => {
       if (!isDecisionEvent(ev)) return false;
-      const targetRole = normalizeRole(ev.targetRole || ev.intendedRecipient || 'team_leader');
-      const roleMatches = targetRole === 'all' || targetRole === normRole || normRole === TRAINEE_ROLES.INSTRUCTOR;
+      const roleMatches = normRole === 'all' || isRoleAllowedForDecision(ev, normRole);
       return ev.scheduledTimeSec <= checkElapsed && roleMatches;
     });
   }
@@ -846,6 +844,41 @@ export function isDecisionEvent(ev) {
     t === 'DECISION_REQUIRED' ||
     t === 'DECISION_POINT'
   );
+}
+
+/**
+ * Resolves target roles array from a decision event / decision point.
+ * Checks ev.targetRoles (array) or falls back to ev.targetRole (string) or ev.intendedRecipient.
+ */
+export function getDecisionTargetRoles(ev) {
+  if (!ev) return [];
+  if (Array.isArray(ev.targetRoles) && ev.targetRoles.length > 0) {
+    return ev.targetRoles.map(r => normalizeRole(r));
+  }
+  if (ev.targetRole) {
+    return [normalizeRole(ev.targetRole)];
+  }
+  if (ev.intendedRecipient) {
+    return [normalizeRole(ev.intendedRecipient)];
+  }
+  return [];
+}
+
+/**
+ * Checks if a specific role is allowed to submit / view decision form for a decision point.
+ * Returns true if:
+ * - targetRoles includes 'all'
+ * - targetRoles is empty (unrestricted)
+ * - targetRoles includes normalized user role
+ * - user is instructor (instructors can preview/supervise)
+ */
+export function isRoleAllowedForDecision(ev, role) {
+  if (!ev) return false;
+  const normRole = normalizeRole(role);
+  if (normRole === TRAINEE_ROLES.INSTRUCTOR) return true;
+  const targets = getDecisionTargetRoles(ev);
+  if (targets.length === 0 || targets.includes('all')) return true;
+  return targets.includes(normRole);
 }
 
 /**
