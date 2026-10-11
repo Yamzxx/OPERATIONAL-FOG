@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS participant_decisions (
   elapsed_time_formatted VARCHAR(16) DEFAULT '00:00',
   submitted_by VARCHAR(64) NOT NULL,
   submitted_role VARCHAR(64) NOT NULL DEFAULT 'commander',
+  evidence_snapshot_json JSONB DEFAULT '{}'::jsonb,
+  sources_used_json JSONB DEFAULT '[]'::jsonb,
   timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 

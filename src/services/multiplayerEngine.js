@@ -4,6 +4,12 @@
  * Supports multi-participant sessions, role targeting, team chat, and synchronized exercise clocks.
  */
 
+import { 
+  normalizeRole, 
+  getDecisionTargetRoles, 
+  isRoleAllowedForDecision 
+} from './eventEngine.js';
+
 const MULTIPLAYER_STORAGE_KEY = 'op_fog_mp_sessions_v1';
 const CHANNEL_NAME = 'op_fog_multiplayer_channel';
 
@@ -356,18 +362,60 @@ class MultiplayerEngine {
 
   // Submit participant decision
   submitDecision(sessionCode, decisionData) {
-    const session = this.getSessionByCode(sessionCode);
-    if (!session) return null;
+    let session = this.getSessionByCode(sessionCode);
+    if (!session) {
+      session = {
+        id: sessionCode,
+        sessionCode: sessionCode,
+        name: 'Exercise Session',
+        decisions: []
+      };
+    }
+
+    const submittedRole = normalizeRole(decisionData?.submittedRole || 'team_leader');
+    const targetRoles = getDecisionTargetRoles(decisionData);
+    if (targetRoles.length > 0 && !targetRoles.includes('all')) {
+      const isAllowed = submittedRole === 'instructor' || targetRoles.includes(submittedRole);
+      if (!isAllowed) {
+        return {
+          error: `Forbidden: Role "${submittedRole}" is not authorized to submit this decision. Permitted role(s): ${targetRoles.join(', ')}`,
+          rejected: true
+        };
+      }
+    }
 
     const newDecision = {
-      id: `dec-${Date.now()}`,
-      timestamp: new Date().toISOString(),
+      id: decisionData.id || `dec-${Date.now()}`,
+      timestamp: decisionData.timestamp || new Date().toISOString(),
       ...decisionData
     };
 
-    session.decisions = [...(session.decisions || []), newDecision];
+    session.decisions = [...(session.decisions || []).filter(d => d.id !== newDecision.id), newDecision];
     this.updateSession(session);
     this.broadcast('DECISION_SUBMITTED', { sessionCode, decision: newDecision });
+
+    // Also push to backend API asynchronously if available
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(session.sessionCode || sessionCode)}/decisions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Service-Id': decisionData.submittedBy || 'Operator',
+          'X-User-Role': decisionData.submittedRole || 'team_leader'
+        },
+        body: JSON.stringify(newDecision)
+      })
+        .then(res => res.json())
+        .then(apiDecision => {
+          if (apiDecision?.id) {
+            session.decisions = (session.decisions || []).map(d => d.id === apiDecision.id ? { ...d, ...apiDecision } : d);
+            this.updateSession(session);
+            this.broadcast('DECISION_UPDATED', { sessionCode, decision: apiDecision });
+          }
+        })
+        .catch(() => {});
+    }
+
     return newDecision;
   }
 
@@ -460,6 +508,17 @@ class MultiplayerEngine {
                 session.disruptionsLog = msg.payload.disruptionsLog;
               }
               this.updateSession(session);
+            }
+          }
+          if (msg.type === 'DECISION_SUBMITTED' && msg.decision) {
+            const code = msg.sessionCode || sessionCode;
+            const session = this.getSessionByCode(code);
+            if (session) {
+              const exists = (session.decisions || []).some(d => d.id === msg.decision.id);
+              if (!exists) {
+                session.decisions = [...(session.decisions || []), msg.decision];
+                this.updateSession(session);
+              }
             }
           }
           this.notifyListeners(msg);

@@ -2,7 +2,9 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { 
   TARGET_LABELS, 
   DISRUPTION_TYPE_LABELS, 
-  normalizeRole 
+  normalizeRole,
+  getDecisionTargetRoles,
+  isRoleAllowedForDecision
 } from './simulationEngine.js';
 
 /**
@@ -182,6 +184,23 @@ export class ServerWebSocketManager {
       case 'DECISION_SUBMITTED': {
         const { sessionCode, decision } = payload || {};
         const code = (sessionCode || ws.sessionCode || 'DEFAULT').toUpperCase();
+
+        if (decision) {
+          const submittedRole = normalizeRole(decision.submittedRole || ws.userRole || 'team_leader');
+          const targetRoles = getDecisionTargetRoles(decision);
+          if (targetRoles.length > 0 && !targetRoles.includes('all')) {
+            const isAllowed = submittedRole === 'instructor' || targetRoles.includes(submittedRole);
+            if (!isAllowed) {
+              this.sendToSocket(ws, {
+                type: 'ERROR',
+                code: 'FORBIDDEN_DECISION_ROLE',
+                error: `Role "${submittedRole}" is not authorized to submit this decision. Permitted role(s): ${targetRoles.join(', ')}`
+              });
+              break;
+            }
+          }
+        }
+
         this.broadcastToRoom(code, {
           type: 'DECISION_SUBMITTED',
           payload: { sessionCode: code, decision }
