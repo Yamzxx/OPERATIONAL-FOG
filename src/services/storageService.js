@@ -72,6 +72,30 @@ const DEFAULT_SCENARIOS = [
         }
       },
       {
+        id: 'sih-ev-dp-1',
+        time: '01:00',
+        title: 'DECISION REQUIRED: Convoy Movement Directive',
+        domain: 'JOINT',
+        type: 'decision',
+        requiresDecision: true,
+        targetRole: 'team_leader',
+        deadlineSeconds: 90,
+        confidence: '80%',
+        decisionPrompt: 'Air radar reports unidentified drones while signals intercept warns of radar decoys. Satellite radio is jammed and Convoy Bravo is halted at Mile 44. As Team Leader, synthesize your squad reports and issue movement directive:',
+        decisionOptions: [
+          'Request Verification & hold Convoy Bravo in cover',
+          'Advance Convoy Bravo immediately along Route Alpha',
+          'Dispatch Land scout team for immediate visual check',
+          'Reroute entire squad through alternate mountain corridor'
+        ],
+        content: 'TACTICAL DECISION REQUIRED: Review received field reports from Land, Air, and Cyber/EW and issue the convoy movement directive.',
+        instructorNotes: 'Ground Truth: Real surveillance drones approaching, but enemy jammer active on Hill 52. Team Leader has only received delayed scout report and missing air telemetry.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'TACTICAL DECISION POINT: Evaluate your received intelligence and issue the Convoy Bravo movement directive.' },
+          instructor: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Trainees prompted for Tactical Decision Point #1 (Convoy Movement Order).' }
+        }
+      },
+      {
         id: 'sih-ev-4',
         time: '01:15',
         title: 'Supply Convoy Bravo Status',
@@ -235,14 +259,49 @@ const DEFAULT_AARS = [
     decisions: [
       {
         id: 'dec-sih-1',
-        title: 'Verify Signal Attenuation & Request Secondary VHF Link',
-        rationale: 'Telemetry experienced 300-second latency. Verified timestamp with Signals officer before changing unit formation.',
-        timestamp: '2026-10-03T18:12:00Z',
-        elapsedMinutes: 12,
-        elapsedTimeFormatted: '12:00',
-        confidence: 'High',
-        submittedBy: 'Commander Alpha',
-        submittedRole: 'commander'
+        title: 'Request Verification',
+        rationale: 'Telemetry experienced latency. Verified with Signals officer before changing unit formation.',
+        timestamp: '2026-10-03T18:05:42Z',
+        elapsedMinutes: 5,
+        elapsedSeconds: 342,
+        elapsedTimeFormatted: '05:42',
+        confidence: '68%',
+        confidencePercent: 68,
+        submittedBy: 'Team Leader',
+        submittedRole: 'team_leader',
+        sourcesUsed: ['sih-ev-1', 'sih-ev-2'],
+        evidenceSnapshot: {
+          participant: { id: 'p-1', name: 'Team Leader', role: 'team_leader' },
+          submittedAt: '2026-10-03T18:05:42Z',
+          elapsedSeconds: 342,
+          elapsedFormatted: '05:42',
+          decision: 'Request Verification',
+          confidence: 68,
+          rationale: 'Telemetry experienced latency. Verified with Signals officer before changing unit formation.',
+          sourcesUsed: ['sih-ev-1', 'sih-ev-2'],
+          eventsAvailable: [
+            { id: 'sih-ev-1', title: 'Initial Tactical Dispatch', deliveredTimeFormatted: '00:00', domain: 'JOINT', content: 'Joint Command orders forward unit alignment along Sector Bravo.' },
+            { id: 'sih-ev-2', title: 'Signal Attenuation Warning', deliveredTimeFormatted: '05:00', domain: 'CYBER', content: 'RF jamming detected. Secondary satellite link experiencing 300-second latency.' }
+          ],
+          eventsDelayedOrDropped: [
+            { id: 'sih-ev-3', title: 'RF Blackout (Dropped Dispatch)', status: 'DROPPED', domain: 'AIR', reason: 'RF Blackout - lost in jamming disruption' }
+          ],
+          channelState: { delaySec: 20, dropRate: 0.25, corrupted: false },
+          availableMessages: [
+            { senderName: 'Land Member', senderRole: 'land_member', text: 'Ground route looks clear on visual check.' }
+          ],
+          activeDisruptions: [
+            { id: 'dis-1', target: 'team_leader', disruptionType: 'delay', severity: 'medium', duration: 60 }
+          ],
+          metrics: {
+            responseTimeSec: 42,
+            responseTimeFormatted: '42s',
+            informationAvailabilityPct: 57,
+            confidenceVsAvailabilityDelta: 11,
+            sharedAwarenessPct: 62,
+            sharedAwarenessScore: 62
+          }
+        }
       },
       {
         id: 'dec-sih-2',
@@ -250,10 +309,45 @@ const DEFAULT_AARS = [
         rationale: 'Received conflicting Thermal Imagery Feed Bravo indicating route obstruction. Ordered hold until ground recon cross-verifies.',
         timestamp: '2026-10-03T18:28:00Z',
         elapsedMinutes: 28,
+        elapsedSeconds: 1680,
         elapsedTimeFormatted: '28:00',
-        confidence: 'Medium',
-        submittedBy: 'Commander Alpha',
-        submittedRole: 'commander'
+        confidence: '75%',
+        confidencePercent: 75,
+        submittedBy: 'Team Leader',
+        submittedRole: 'team_leader',
+        sourcesUsed: ['sih-ev-4', 'sih-ev-5'],
+        evidenceSnapshot: {
+          participant: { id: 'p-1', name: 'Team Leader', role: 'team_leader' },
+          submittedAt: '2026-10-03T18:28:00Z',
+          elapsedSeconds: 1680,
+          elapsedFormatted: '28:00',
+          decision: 'Hold Position at Sector Bravo Grid 44-B',
+          confidence: 75,
+          rationale: 'Received conflicting Thermal Imagery Feed Bravo indicating route obstruction. Ordered hold until ground recon cross-verifies.',
+          sourcesUsed: ['sih-ev-4', 'sih-ev-5'],
+          eventsAvailable: [
+            { id: 'sih-ev-1', title: 'Initial Tactical Dispatch', deliveredTimeFormatted: '00:00', domain: 'JOINT', content: 'Joint Command orders forward unit alignment along Sector Bravo.' },
+            { id: 'sih-ev-4', title: 'Forward Recon Update A', deliveredTimeFormatted: '18:00', domain: 'LAND', content: 'Reconnaissance Patrol Alpha reports Sector Bravo route clear.' },
+            { id: 'sih-ev-5', title: 'Satellite Imagery Feed B (Conflicting)', deliveredTimeFormatted: '25:00', domain: 'AIR', content: 'Thermal imagery feed Bravo indicates heavy route obstruction at Sector Bravo grid 44-B.' }
+          ],
+          eventsDelayedOrDropped: [
+            { id: 'sih-ev-3', title: 'RF Blackout (Dropped Dispatch)', status: 'DROPPED', domain: 'AIR', reason: 'RF Blackout - lost in jamming disruption' }
+          ],
+          channelState: { delaySec: 0, dropRate: 0, corrupted: false },
+          availableMessages: [
+            { senderName: 'Land Member', senderRole: 'land_member', text: 'Recon team reports route clear.' },
+            { senderName: 'Air Member', senderRole: 'air_member', text: 'Thermal feed shows heavy obstruction!' }
+          ],
+          activeDisruptions: [],
+          metrics: {
+            responseTimeSec: 35,
+            responseTimeFormatted: '35s',
+            informationAvailabilityPct: 71,
+            confidenceVsAvailabilityDelta: 4,
+            sharedAwarenessPct: 78,
+            sharedAwarenessScore: 78
+          }
+        }
       }
     ],
     events: [
