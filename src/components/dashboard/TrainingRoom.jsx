@@ -19,7 +19,15 @@ import {
   ShieldAlert,
   Info,
   Zap,
-  RefreshCw
+  RefreshCw,
+  Target,
+  FileText,
+  Eye,
+  ShieldCheck,
+  CheckSquare,
+  Square as SquareIcon,
+  Layers,
+  BarChart2
 } from 'lucide-react';
 import { 
   EventEngine, 
@@ -29,9 +37,6 @@ import {
   TARGET_LABELS,
   DISRUPTION_TYPE_LABELS,
   normalizeRole,
-<<<<<<< Updated upstream
-  formatSecondsToMMSS 
-=======
   formatSecondsToMMSS,
   parseTimeToSeconds,
   isDecisionEvent,
@@ -40,7 +45,6 @@ import {
   createEvidenceSnapshot,
   getDecisionTargetRoles,
   isRoleAllowedForDecision
->>>>>>> Stashed changes
 } from '../../services/eventEngine';
 import { multiplayerEngine } from '../../services/multiplayerEngine';
 import { TeamCoordinationPanel } from './TeamCoordinationPanel';
@@ -79,8 +83,12 @@ export const TrainingRoom = ({
   const [expandedEventId, setExpandedEventId] = useState(null);
 
   const [decisionTitle, setDecisionTitle] = useState('');
+  const [selectedOption, setSelectedOption] = useState('');
   const [rationale, setRationale] = useState('');
   const [confidence, setConfidence] = useState('Medium');
+  const [confidencePercent, setConfidencePercent] = useState(68);
+  const [selectedSources, setSelectedSources] = useState([]);
+  const [inspectingDecision, setInspectingDecision] = useState(null);
   const [showEndModal, setShowEndModal] = useState(false);
   const [decisions, setDecisions] = useState(existingDecisions);
   const [liveSession, setLiveSession] = useState(session);
@@ -133,6 +141,17 @@ export const TrainingRoom = ({
             ...prev,
             teamMessages: [...(prev?.teamMessages || []), event.payload.message]
           };
+        });
+      }
+      // Real-time Decision Synchronization across clients & WebSocket rooms
+      if ((event?.type === 'DECISION_SUBMITTED' || event?.type === 'DECISION_UPDATED') && (event?.payload?.decision || event?.decision)) {
+        const incomingDec = event.payload?.decision || event.decision;
+        setDecisions(prev => {
+          const exists = prev.some(d => d.id === incomingDec.id);
+          if (exists) {
+            return prev.map(d => d.id === incomingDec.id ? { ...d, ...incomingDec } : d);
+          }
+          return [...prev, incomingDec];
         });
       }
       // Real-time Disruption Synchronization across clients & WebSocket rooms
@@ -202,17 +221,6 @@ export const TrainingRoom = ({
     }
   };
 
-<<<<<<< Updated upstream
-  const handleDecisionSubmit = (e) => {
-    e.preventDefault();
-    if (!decisionTitle.trim() || !rationale.trim()) return;
-
-    const newDecision = {
-      id: `dec-${Date.now()}`,
-      title: decisionTitle.trim(),
-      rationale: rationale.trim(),
-      confidence,
-=======
   // Scenario-triggered decision point detection
   const scenarioEvents = activeScenario?.events || [];
   const triggeredDecisionPoints = scenarioEvents.filter(ev => {
@@ -307,25 +315,29 @@ export const TrainingRoom = ({
       rationale: rationale.trim(),
       confidence: `${confidencePercent}%`,
       confidencePercent,
->>>>>>> Stashed changes
       timestamp: new Date().toISOString(),
       elapsedMinutes: Math.floor(engineState.elapsedSeconds / 60),
+      elapsedSeconds: engineState.elapsedSeconds,
       elapsedTimeFormatted: engineState.elapsedFormatted,
-      submittedBy: currentUser?.serviceId || 'Operator',
-      submittedRole: userRole
+      submittedBy: currentUser?.serviceId || 'Leader-01',
+      submittedRole: userRole,
+      sourcesUsed: selectedSources,
+      evidenceSnapshot
     };
 
     if (session?.sessionCode) {
       multiplayerEngine.submitDecision(session.sessionCode, newDecision);
     } else {
-      onSaveDecision(session.id, newDecision);
-      setDecisions([...decisions, newDecision]);
+      if (onSaveDecision) onSaveDecision(session?.id, newDecision);
+      setDecisions(prev => [...prev, newDecision]);
     }
 
-    showToast(`Decision "${newDecision.title}" recorded at ${newDecision.elapsedTimeFormatted}.`, 'success');
+    showToast(`Decision "${newDecision.title}" submitted at ${newDecision.elapsedTimeFormatted}. Evidence snapshot captured!`, 'success');
 
     setDecisionTitle('');
+    setSelectedOption('');
     setRationale('');
+    setSelectedSources([]);
   };
 
   const handleSendTeamMessage = (text) => {
@@ -394,8 +406,6 @@ export const TrainingRoom = ({
   };
 
   // Trainee messages for active view
-  const currentViewRole = isInstructor && activeTab === 'participant' ? previewRole : userRole;
-  const participantMessages = engineRef.current ? engineRef.current.getParticipantMessages(currentViewRole) : [];
   const asymmetryMatrix = engineRef.current ? engineRef.current.getAsymmetryMatrix() : [];
   const groundTruthEvents = engineRef.current ? engineRef.current.getGroundTruthEvents() : [];
 
@@ -778,34 +788,6 @@ export const TrainingRoom = ({
               onSendTeamMessage={handleSendTeamMessage}
             />
 
-<<<<<<< Updated upstream
-            {/* Decision Submission Box */}
-            <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '18px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <div>
-                  <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0 }}>
-                    Record Your Decision
-                  </h3>
-                  <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
-                    Document what action you decide to take based on the information you have.
-                  </div>
-                </div>
-              </div>
-
-              <form onSubmit={handleDecisionSubmit}>
-                <div className="gov-form-group" style={{ marginBottom: '10px' }}>
-                  <label className="gov-form-label" style={{ fontSize: '12px' }}>What action are you taking?</label>
-                  <input 
-                    type="text"
-                    className="gov-form-input"
-                    placeholder="e.g. Hold patrol at Sector Alpha until radar confirms route"
-                    value={decisionTitle}
-                    onChange={(e) => setDecisionTitle(e.target.value)}
-                    required
-                    style={{ fontSize: '13px' }}
-                  />
-                </div>
-=======
             {/* Decision Submission Box & Structured Decision Point */}
             <div 
               id="decision-console-panel"
@@ -897,65 +879,218 @@ export const TrainingRoom = ({
                         {selectedSources.length} selected of {participantMessages.length} received
                       </span>
                     </div>
->>>>>>> Stashed changes
 
-                <div className="gov-form-group" style={{ marginBottom: '10px' }}>
-                  <label className="gov-form-label" style={{ fontSize: '12px' }}>Why? (Reason / Explanation)</label>
-                  <textarea 
-                    className="gov-form-input"
-                    rows={2}
-                    placeholder="e.g. Air member reported radar gap, so we cannot advance without verification..."
-                    value={rationale}
-                    onChange={(e) => setRationale(e.target.value)}
-                    required
-                    style={{ fontSize: '13px' }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <label className="gov-form-label" style={{ marginBottom: 0, fontSize: '12px' }}>Confidence:</label>
-                    <select 
-                      className="gov-form-select"
-                      value={confidence}
-                      onChange={(e) => setConfidence(e.target.value)}
-                      style={{ padding: '4px 8px', fontSize: '12px' }}
-                    >
-                      <option value="High">High Confidence</option>
-                      <option value="Medium">Medium Confidence</option>
-                      <option value="Low">Low Confidence (High Uncertainty)</option>
-                    </select>
+                    {participantMessages.length === 0 ? (
+                      <div style={{ fontSize: '12px', color: '#94A3B8', fontStyle: 'italic', padding: '4px 0' }}>
+                        No dispatches received yet. Operating under complete information fog.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', maxHeight: '110px', overflowY: 'auto' }}>
+                        {participantMessages.map((pm, pmIdx) => {
+                          const isChecked = selectedSources.includes(pm.id || pmIdx);
+                          return (
+                            <label
+                              key={pm.id || pmIdx}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                fontSize: '12px',
+                                color: '#334155',
+                                cursor: 'pointer',
+                                background: isChecked ? '#EFF6FF' : '#FFFFFF',
+                                border: `1px solid ${isChecked ? '#BFDBFE' : '#E2E8F0'}`,
+                                borderRadius: '4px',
+                                padding: '4px 8px'
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  const id = pm.id || pmIdx;
+                                  if (e.target.checked) setSelectedSources(prev => [...prev, id]);
+                                  else setSelectedSources(prev => prev.filter(x => x !== id));
+                                }}
+                              />
+                              <span style={{ fontFamily: 'monospace', fontSize: '11px', color: '#2563EB' }}>
+                                [{formatSecondsToMMSS(pm.actualDeliveryTimeSec || pm.scheduledTimeSec)}]
+                              </span>
+                              <span style={{ fontWeight: '600', flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {pm.title}
+                              </span>
+                              <span style={{ fontSize: '10px', color: '#64748B' }}>
+                                ({pm.confidence || '80%'})
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-<<<<<<< Updated upstream
 
-                  <button 
-                    type="submit" 
-                    style={{
-                      backgroundColor: 'var(--color-primary-navy)',
-                      color: '#FFF',
-                      border: 'none',
-                      padding: '8px 16px',
-                      fontSize: '13px',
-                      fontWeight: 'bold',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}
-                  >
-                    <Send size={13} />
-                    <span>Submit Decision</span>
-                  </button>
-                </div>
-              </form>
-            </div>
-=======
+                  {/* Step 2: Decision Selection / Options */}
+                  {activeDecisionPoint?.decisionOptions && activeDecisionPoint.decisionOptions.length > 0 ? (
+                    <div className="gov-form-group" style={{ marginBottom: '10px' }}>
+                      <label className="gov-form-label" style={{ fontSize: '12px', fontWeight: 'bold' }}>
+                        Select Tactical Directive / Decision:
+                      </label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {activeDecisionPoint.decisionOptions.map((opt, optIdx) => (
+                          <label
+                            key={optIdx}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              padding: '6px 10px',
+                              borderRadius: '4px',
+                              border: `1px solid ${selectedOption === opt ? '#2563EB' : '#E2E8F0'}`,
+                              background: selectedOption === opt ? '#EFF6FF' : '#FFF',
+                              cursor: 'pointer',
+                              fontSize: '13px',
+                              fontWeight: selectedOption === opt ? '600' : 'normal',
+                              color: selectedOption === opt ? '#1D4ED8' : '#334155'
+                            }}
+                          >
+                            <input
+                              type="radio"
+                              name="decision-option"
+                              checked={selectedOption === opt}
+                              onChange={() => setSelectedOption(opt)}
+                            />
+                            <span>{opt}</span>
+                          </label>
+                        ))}
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '6px 10px',
+                            borderRadius: '4px',
+                            border: `1px solid ${selectedOption === '__custom__' ? '#2563EB' : '#E2E8F0'}`,
+                            background: selectedOption === '__custom__' ? '#EFF6FF' : '#FFF',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                            color: '#334155'
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="decision-option"
+                            checked={selectedOption === '__custom__'}
+                            onChange={() => setSelectedOption('__custom__')}
+                          />
+                          <span>Enter custom command decision...</span>
+                        </label>
+                        {selectedOption === '__custom__' && (
+                          <input
+                            type="text"
+                            className="gov-form-input"
+                            placeholder="Type custom command decision..."
+                            value={decisionTitle}
+                            onChange={(e) => setDecisionTitle(e.target.value)}
+                            required
+                            style={{ fontSize: '13px', marginTop: '4px' }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="gov-form-group" style={{ marginBottom: '10px' }}>
+                      <label className="gov-form-label" style={{ fontSize: '12px' }}>What action are you taking?</label>
+                      <input 
+                        type="text"
+                        className="gov-form-input"
+                        placeholder="e.g. Hold patrol at Sector Alpha until radar confirms route"
+                        value={decisionTitle}
+                        onChange={(e) => setDecisionTitle(e.target.value)}
+                        required
+                        style={{ fontSize: '13px' }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Step 3: Confidence Slider (0-100%) */}
+                  <div style={{ marginBottom: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '4px', padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#1E293B' }}>
+                        Decision Confidence (0–100%):
+                      </label>
+                      <span style={{
+                        fontSize: '12px',
+                        fontWeight: 'bold',
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        background: confidencePercent >= 75 ? '#DCFCE7' : (confidencePercent >= 50 ? '#FEF3C7' : '#FEE2E2'),
+                        color: confidencePercent >= 75 ? '#166534' : (confidencePercent >= 50 ? '#92400E' : '#991B1B')
+                      }}>
+                        {confidencePercent}% {confidencePercent >= 75 ? '• High Confidence' : (confidencePercent >= 50 ? '• Moderate' : '• High Uncertainty')}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={confidencePercent}
+                      onChange={(e) => setConfidencePercent(parseInt(e.target.value, 10))}
+                      style={{ width: '100%', cursor: 'pointer' }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#64748B', marginTop: '2px' }}>
+                      <span>0% (Blind Guess)</span>
+                      <span>50% (Ambiguous)</span>
+                      <span>100% (Absolute Certainty)</span>
+                    </div>
+                  </div>
+
+                  {/* Step 4: Rationale */}
+                  <div className="gov-form-group" style={{ marginBottom: '10px' }}>
+                    <label className="gov-form-label" style={{ fontSize: '12px', fontWeight: 'bold' }}>
+                      Why? (Stated Rationale / Operational Justification)
+                    </label>
+                    <textarea 
+                      className="gov-form-input"
+                      rows={2}
+                      placeholder="Explain your military/tactical reason based on the available information..."
+                      value={rationale}
+                      onChange={(e) => setRationale(e.target.value)}
+                      required
+                      style={{ fontSize: '13px' }}
+                    />
+                  </div>
+
+                  {/* Submit button with Evidence Snapshot indicator */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
+                    <div style={{ fontSize: '11px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <ShieldCheck size={13} color="#16A34A" />
+                      <span>Will capture immutable Evidence Snapshot</span>
+                    </div>
+
+                    <button 
+                      type="submit" 
+                      style={{
+                        backgroundColor: 'var(--color-primary-navy)',
+                        color: '#FFF',
+                        border: 'none',
+                        padding: '8px 18px',
+                        fontSize: '13px',
+                        fontWeight: 'bold',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                    >
+                      <Send size={13} />
+                      <span>Submit Command Decision</span>
+                    </button>
+                  </div>
                 </form>
               </>
             )}
           </div>
->>>>>>> Stashed changes
 
             {/* Past Decisions Recorded List */}
             <div style={{ backgroundColor: '#FFF', border: '1px solid #E2E8F0', borderRadius: '6px', padding: '16px', flexGrow: 1 }}>
@@ -1198,6 +1333,134 @@ export const TrainingRoom = ({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* LIVE TRAINEE COMMAND DECISIONS & EVIDENCE STREAM */}
+          <div style={{ backgroundColor: '#FFFFFF', border: '1px solid #CBD5E1', borderRadius: '6px', padding: '16px 20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Target size={18} color="#2563EB" />
+                <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: 0, letterSpacing: '0.5px' }}>
+                  LIVE TRAINEE COMMAND DECISIONS & EVIDENCE
+                </h3>
+              </div>
+              <span style={{ fontSize: '12px', color: '#64748B' }}>
+                Real-time Evidence Capture • {decisions.length} Decisions Logged
+              </span>
+            </div>
+
+            {decisions.length === 0 ? (
+              <div style={{ padding: '16px', textAlign: 'center', color: '#64748B', backgroundColor: '#F8FAFC', borderRadius: '4px', border: '1px dashed #CBD5E1', fontSize: '13px' }}>
+                No trainee command decisions logged yet. When trainees submit decisions at scenario triggers, their choices and immutable Evidence Snapshots will appear here in real time.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {decisions.map((d, dIdx) => {
+                  const snapshot = d.evidenceSnapshot || {};
+                  const metrics = snapshot.metrics || {};
+                  const infoAvailability = metrics.informationAvailabilityPct !== undefined 
+                    ? metrics.informationAvailabilityPct 
+                    : (engineRef.current ? engineRef.current.getInformationAvailability(d.submittedRole || 'team_leader') : 57);
+                  const responseTime = metrics.responseTimeFormatted || `${metrics.responseTimeSec || 42}s`;
+                  const sharedAwareness = metrics.sharedAwarenessPct !== undefined 
+                    ? metrics.sharedAwarenessPct 
+                    : (engineRef.current ? engineRef.current.getSharedAwareness(liveSession?.teamMessages || []) : 62);
+                  const confStr = d.confidence || `${metrics.confidenceNum || 68}%`;
+                  const confNum = parseInt(confStr, 10) || 68;
+                  const delta = confNum - infoAvailability;
+
+                  return (
+                    <div 
+                      key={d.id || dIdx}
+                      style={{
+                        backgroundColor: '#F8FAFC',
+                        border: '1px solid #CBD5E1',
+                        borderLeft: '5px solid #2563EB',
+                        borderRadius: '6px',
+                        padding: '16px'
+                      }}
+                    >
+                      {/* Decision Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '15px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                            {ROLE_LABELS[d.submittedRole] || d.submittedRole || 'Team Leader'} Decision
+                          </span>
+                          <span style={{ fontSize: '11px', background: '#E2E8F0', color: '#475569', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                            Operator: {d.submittedBy || 'Leader-01'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#2563EB', background: '#EFF6FF', border: '1px solid #BFDBFE', padding: '3px 10px', borderRadius: '4px' }}>
+                          Submitted: T+{d.elapsedTimeFormatted}
+                        </div>
+                      </div>
+
+                      {/* Exact Summary Cards requested */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', margin: '10px 0', padding: '12px', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '6px' }}>
+                        <div>
+                          <div style={{ fontSize: '10px', color: '#64748B', fontWeight: 'bold', textTransform: 'uppercase' }}>Decision</div>
+                          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#0F172A', marginTop: '2px' }}>
+                            {d.title}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '10px', color: '#64748B', fontWeight: 'bold', textTransform: 'uppercase' }}>Confidence</div>
+                          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#2563EB', marginTop: '2px' }}>
+                            {confStr}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '10px', color: '#64748B', fontWeight: 'bold', textTransform: 'uppercase' }}>Submitted Time</div>
+                          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#334155', marginTop: '2px' }}>
+                            T+{d.elapsedTimeFormatted}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '10px', color: '#64748B', fontWeight: 'bold', textTransform: 'uppercase' }}>Information Available</div>
+                          <div style={{ fontSize: '14px', fontWeight: 'bold', color: infoAvailability < 60 ? '#D97706' : '#166534', marginTop: '2px' }}>
+                            {infoAvailability}%
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Stated Rationale */}
+                      <div style={{ fontSize: '13px', color: '#334155', margin: '8px 0', lineHeight: '1.4' }}>
+                        <strong>Stated Rationale:</strong> {d.rationale}
+                      </div>
+
+                      {/* 4 Core Metrics requested */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #E2E8F0', fontSize: '12px' }}>
+                        <span style={{ background: '#EFF6FF', color: '#1D4ED8', padding: '4px 8px', borderRadius: '4px', border: '1px solid #BFDBFE' }}>
+                          ⏱️ Response Time: <strong>{responseTime}</strong>
+                        </span>
+                        <span style={{ background: '#FEF3C7', color: '#92400E', padding: '4px 8px', borderRadius: '4px', border: '1px solid #FCD34D' }}>
+                          📊 Info Availability: <strong>{infoAvailability}%</strong>
+                        </span>
+                        <span style={{ background: '#F1F5F9', color: '#334155', padding: '4px 8px', borderRadius: '4px', border: '1px solid #CBD5E1' }}>
+                          ⚖️ Confidence vs Info: <strong>{confStr} vs {infoAvailability}% ({delta >= 0 ? `+${delta}% Fog Margin` : `${delta}%`})</strong>
+                        </span>
+                        <span style={{ background: '#DCFCE7', color: '#166534', padding: '4px 8px', borderRadius: '4px', border: '1px solid #86EFAC' }}>
+                          🌐 Shared Awareness: <strong>{sharedAwareness}%</strong>
+                        </span>
+                      </div>
+
+                      {/* Action to Inspect Evidence Snapshot */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setInspectingDecision(d)}
+                          className="gov-btn"
+                          style={{ fontSize: '12px', padding: '5px 12px', backgroundColor: '#FFFFFF', border: '1px solid #2563EB', color: '#2563EB', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', borderRadius: '4px' }}
+                        >
+                          <Eye size={13} />
+                          <span>Inspect Evidence Snapshot</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* THE INFORMATION ASYMMETRY TABLE */}
@@ -1587,6 +1850,159 @@ export const TrainingRoom = ({
                   }}
                 >
                   Finish & View Debrief
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. EVIDENCE SNAPSHOT INSPECTOR MODAL */}
+      {inspectingDecision && (
+        <div className="gov-modal-overlay" onClick={() => setInspectingDecision(null)}>
+          <div className="gov-modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '750px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="gov-modal-header" style={{ backgroundColor: 'var(--color-primary-navy)', color: '#FFF' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Eye size={18} color="#FBBF24" />
+                <span style={{ fontWeight: 'bold', fontSize: '15px' }}>
+                  Evidence Snapshot: What Did Trainee Know at Decision Time?
+                </span>
+              </div>
+              <button className="gov-modal-close" onClick={() => setInspectingDecision(null)} style={{ color: '#FFF' }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="gov-modal-body" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {/* Decision Header Info */}
+              <div style={{ background: '#F8FAFC', border: '1px solid #CBD5E1', borderRadius: '6px', padding: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div>
+                    <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#2563EB', textTransform: 'uppercase' }}>
+                      {ROLE_LABELS[inspectingDecision.submittedRole] || inspectingDecision.submittedRole} ({inspectingDecision.submittedBy})
+                    </span>
+                    <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--color-primary-navy)', margin: '2px 0 0' }}>
+                      {inspectingDecision.title}
+                    </h3>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#2563EB' }}>
+                      Submitted: T+{inspectingDecision.elapsedTimeFormatted}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#64748B' }}>
+                      Confidence: <strong>{inspectingDecision.confidence}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '13px', color: '#334155', background: '#FFFFFF', padding: '10px', borderRadius: '4px', border: '1px solid #E2E8F0' }}>
+                  <strong>Stated Rationale:</strong> {inspectingDecision.rationale}
+                </div>
+              </div>
+
+              {/* 4 Core Metrics Grid */}
+              {(() => {
+                const snapshot = inspectingDecision.evidenceSnapshot || {};
+                const metrics = snapshot.metrics || {};
+                const infoAvail = metrics.informationAvailabilityPct !== undefined ? metrics.informationAvailabilityPct : 57;
+                const respTime = metrics.responseTimeFormatted || `${metrics.responseTimeSec || 42}s`;
+                const sharedAware = metrics.sharedAwarenessPct !== undefined ? metrics.sharedAwarenessPct : 62;
+                const conf = parseInt(inspectingDecision.confidence, 10) || 68;
+                const delta = conf - infoAvail;
+
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
+                    <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '6px', padding: '10px' }}>
+                      <div style={{ fontSize: '10px', color: '#1D4ED8', fontWeight: 'bold' }}>RESPONSE TIME</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#1E40AF', marginTop: '2px' }}>{respTime}</div>
+                    </div>
+                    <div style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: '6px', padding: '10px' }}>
+                      <div style={{ fontSize: '10px', color: '#92400E', fontWeight: 'bold' }}>INFO AVAILABLE</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#B45309', marginTop: '2px' }}>{infoAvail}%</div>
+                    </div>
+                    <div style={{ backgroundColor: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '6px', padding: '10px' }}>
+                      <div style={{ fontSize: '10px', color: '#475569', fontWeight: 'bold' }}>CONFIDENCE VS INFO</div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: delta >= 0 ? '#DC2626' : '#166534', marginTop: '2px' }}>
+                        {delta >= 0 ? `+${delta}% Fog Margin` : `${delta}%`}
+                      </div>
+                    </div>
+                    <div style={{ backgroundColor: '#DCFCE7', border: '1px solid #86EFAC', borderRadius: '6px', padding: '10px' }}>
+                      <div style={{ fontSize: '10px', color: '#166534', fontWeight: 'bold' }}>SHARED AWARENESS</div>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#15803D', marginTop: '2px' }}>{sharedAware}%</div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Side-by-Side: What Was Available vs What Was Withheld/Delayed */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                {/* Available to Trainee */}
+                <div style={{ border: '1px solid #BBF7D0', backgroundColor: '#F0FDF4', borderRadius: '6px', padding: '12px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#166534', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <CheckCircle size={14} />
+                    <span>Information Available ({inspectingDecision.evidenceSnapshot?.eventsAvailable?.length || 0} Delivered)</span>
+                  </div>
+                  {(!inspectingDecision.evidenceSnapshot?.eventsAvailable || inspectingDecision.evidenceSnapshot.eventsAvailable.length === 0) ? (
+                    <div style={{ fontSize: '12px', color: '#94A3B8', fontStyle: 'italic' }}>None (Zero information received)</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
+                      {inspectingDecision.evidenceSnapshot.eventsAvailable.map((ev, i) => (
+                        <div key={i} style={{ background: '#FFFFFF', border: '1px solid #DCFCE7', borderRadius: '4px', padding: '6px 8px', fontSize: '11px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: '#166534' }}>
+                            <span>[{ev.deliveredTimeFormatted || '00:00'}] {ev.title}</span>
+                            <span>{ev.domain}</span>
+                          </div>
+                          <div style={{ color: '#334155', marginTop: '2px' }}>{ev.content}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Withheld or Delayed from Trainee */}
+                <div style={{ border: '1px solid #FECACA', backgroundColor: '#FEF2F2', borderRadius: '6px', padding: '12px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#991B1B', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <AlertTriangle size={14} />
+                    <span>Ground Truth Withheld / Delayed ({inspectingDecision.evidenceSnapshot?.eventsDelayedOrDropped?.length || 0} Friction)</span>
+                  </div>
+                  {(!inspectingDecision.evidenceSnapshot?.eventsDelayedOrDropped || inspectingDecision.evidenceSnapshot.eventsDelayedOrDropped.length === 0) ? (
+                    <div style={{ fontSize: '12px', color: '#94A3B8', fontStyle: 'italic' }}>None (Full ground truth was known)</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
+                      {inspectingDecision.evidenceSnapshot.eventsDelayedOrDropped.map((ev, i) => (
+                        <div key={i} style={{ background: '#FFFFFF', border: '1px solid #FEE2E2', borderRadius: '4px', padding: '6px 8px', fontSize: '11px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: '#991B1B' }}>
+                            <span>[{ev.status}] {ev.title}</span>
+                            <span>{ev.domain}</span>
+                          </div>
+                          <div style={{ color: '#B91C1C', fontStyle: 'italic', marginTop: '2px' }}>{ev.reason}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Information Sources Cited by Trainee */}
+              {inspectingDecision.sourcesUsed && inspectingDecision.sourcesUsed.length > 0 && (
+                <div style={{ background: '#F8FAFC', border: '1px solid #CBD5E1', borderRadius: '6px', padding: '12px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1E293B', marginBottom: '6px' }}>
+                    Information Sources Cited as Evidence:
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {inspectingDecision.sourcesUsed.map((src, i) => (
+                      <span key={i} style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1D4ED8', fontSize: '11px', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+                        Source: #{src}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Footer */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #E2E8F0', paddingTop: '12px' }}>
+                <button className="gov-btn gov-btn-secondary" onClick={() => setInspectingDecision(null)}>
+                  Close Inspector
                 </button>
               </div>
             </div>

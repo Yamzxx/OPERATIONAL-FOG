@@ -523,12 +523,6 @@ export function generateAsymmetryMatrix(eventsList, elapsedSeconds = 0, sessionS
 export function filterParticipantMessages(evaluatedEvents, userRole = 'all') {
   return evaluateParticipantDeliveredEvents(evaluatedEvents, userRole, 99999);
 }
-<<<<<<< Updated upstream
-=======
-
-/**
- * Checks if an event is a structured Decision Point.
- */
 export function isDecisionEvent(ev) {
   if (!ev) return false;
   const t = (ev.type || ev.eventType || ev.event_type || '').toUpperCase();
@@ -744,4 +738,3 @@ export function createEvidenceSnapshot({
   };
 }
 
->>>>>>> Stashed changes

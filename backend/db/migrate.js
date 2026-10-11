@@ -84,8 +84,6 @@ const DEFAULT_SCENARIOS = [
         }
       },
       {
-<<<<<<< Updated upstream
-=======
         id: 'sih-ev-dp-1',
         time: '01:00',
         title: 'DECISION REQUIRED: Convoy Movement Directive',
@@ -111,7 +109,6 @@ const DEFAULT_SCENARIOS = [
         }
       },
       {
->>>>>>> Stashed changes
         id: 'sih-ev-4',
         time: '01:15',
         title: 'Supply Convoy Bravo Status',
@@ -265,6 +262,14 @@ export async function migrate() {
     await client.query(`
       ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS elapsed_seconds INTEGER DEFAULT 0;
     `).catch(err => console.log('Note: participant_decisions.elapsed_seconds already present:', err.message));
+
+    await client.query(`
+      ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS evidence_snapshot_json JSONB DEFAULT '{}'::jsonb;
+    `).catch(err => console.log('Note: participant_decisions.evidence_snapshot_json already present:', err.message));
+
+    await client.query(`
+      ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS sources_used_json JSONB DEFAULT '[]'::jsonb;
+    `).catch(err => console.log('Note: participant_decisions.sources_used_json already present:', err.message));
 
     console.log('Column migrations applied.');
 

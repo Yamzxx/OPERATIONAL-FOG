@@ -11,9 +11,6 @@ import {
   generateAsymmetryMatrix,
   filterParticipantMessages, 
   DELIVERY_STATUS,
-<<<<<<< Updated upstream
-  formatSecondsToMMSS
-=======
   formatSecondsToMMSS,
   isDecisionEvent,
   calculateInformationAvailability,
@@ -22,7 +19,6 @@ import {
   getDecisionTargetRoles,
   isRoleAllowedForDecision,
   normalizeRole
->>>>>>> Stashed changes
 } from './services/simulationEngine.js';
 import { initWebSocketServer, wsManager } from './services/websocketServer.js';
 
@@ -885,6 +881,8 @@ function mapDecisionRow(r) {
     elapsedTimeFormatted: r.elapsed_time_formatted,
     submittedBy: r.submitted_by,
     submittedRole: r.submitted_role,
+    sourcesUsed: typeof r.sources_used_json === 'string' ? JSON.parse(r.sources_used_json) : (r.sources_used_json || []),
+    evidenceSnapshot: typeof r.evidence_snapshot_json === 'string' ? JSON.parse(r.evidence_snapshot_json) : (r.evidence_snapshot_json || {}),
     timestamp: r.timestamp
   };
 }
@@ -1017,8 +1015,6 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
     const elapsedMinutes = d.elapsedMinutes !== undefined ? parseInt(d.elapsedMinutes, 10) : Math.floor(rawElapsedSeconds / 60);
     const elapsedFormatted = d.elapsedTimeFormatted || `${String(Math.floor(rawElapsedSeconds / 60)).padStart(2,'0')}:${String(rawElapsedSeconds % 60).padStart(2,'0')}`;
 
-<<<<<<< Updated upstream
-=======
     // Build or accept Evidence Snapshot
     const snapshot = typeof exRow.scenario_snapshot_json === 'string'
       ? JSON.parse(exRow.scenario_snapshot_json)
@@ -1077,13 +1073,11 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
           teamMessages,
           decisionTriggerTimeSec: d.decisionTriggerTimeSec || rawElapsedSeconds
         });
-
->>>>>>> Stashed changes
     // ON CONFLICT (id) DO NOTHING: duplicate submission (double-click, retry) is silently accepted
     const result = await queryDB(
       `INSERT INTO participant_decisions
-         (id, exercise_id, title, rationale, confidence, elapsed_minutes, elapsed_seconds, elapsed_time_formatted, submitted_by, submitted_role, timestamp)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         (id, exercise_id, title, rationale, confidence, elapsed_minutes, elapsed_seconds, elapsed_time_formatted, submitted_by, submitted_role, timestamp, evidence_snapshot_json, sources_used_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (id) DO NOTHING
        RETURNING *`,
       [
@@ -1097,19 +1091,34 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
         elapsedFormatted,
         submittedBy,
         submittedRole,
-        timestamp
+        timestamp,
+        JSON.stringify(evidenceSnapshot),
+        JSON.stringify(sourcesUsed)
       ]
     );
 
+    let savedDecision;
     if (result.rows.length === 0) {
       // DO NOTHING fired — fetch and return the existing record (idempotent response)
       const existing = await queryDB('SELECT * FROM participant_decisions WHERE id = $1', [id]);
       const row = existing.rows[0];
-      if (row) return res.status(200).json(mapDecisionRow(row));
-      return res.status(200).json({ id, exerciseId, duplicate: true });
+      if (row) savedDecision = mapDecisionRow(row);
+      else return res.status(200).json({ id, exerciseId, duplicate: true });
+    } else {
+      savedDecision = mapDecisionRow(result.rows[0]);
     }
 
-    res.status(201).json(mapDecisionRow(result.rows[0]));
+    // Real-time broadcast to room via WebSocket
+    if (wsManager) {
+      wsManager.broadcastToRoom(exRow.session_code || exRow.id, {
+        type: 'DECISION_SUBMITTED',
+        exerciseId: exRow.id,
+        sessionCode: exRow.session_code,
+        decision: savedDecision
+      });
+    }
+
+    res.status(result.rows.length > 0 ? 201 : 200).json(savedDecision);
   } catch (err) {
     res.status(500).json({ error: 'Failed to log decision', details: err.message });
   }

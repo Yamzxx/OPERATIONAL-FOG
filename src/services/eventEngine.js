@@ -365,6 +365,11 @@ export class EventEngine {
         delaySeconds: delaySec,
         actualDeliveryTimeSec: actualDeliverySec,
         recipientRole: ev.recipientRole || ev.intendedRecipient || 'all',
+        targetRole: ev.targetRole || ev.recipientRole || ev.intendedRecipient || 'all',
+        deadlineSeconds: ev.deadlineSeconds,
+        decisionOptions: ev.decisionOptions || [],
+        requiresDecision: ev.requiresDecision,
+        isDecisionPoint: ev.isDecisionPoint,
         instructorNotes: ev.instructorNotes || '',
         roleVariations: ev.roleVariations || {},
         status: DELIVERY_STATUS.PENDING,
@@ -756,9 +761,6 @@ export class EventEngine {
       disruptionsLog: [...this.disruptionsLog]
     };
   }
-<<<<<<< Updated upstream
-=======
-
   /**
    * Returns active decision events that have triggered at or before current elapsed time.
    */
@@ -1080,5 +1082,4 @@ export function createEvidenceSnapshot({
       sharedAwarenessPct
     }
   };
->>>>>>> Stashed changes
 }
