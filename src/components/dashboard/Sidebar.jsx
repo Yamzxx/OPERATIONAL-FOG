@@ -1,25 +1,26 @@
 import React from 'react';
 import { NationalEmblem } from '../EmblemAndFlag';
-import { 
-  LayoutDashboard, 
-  BookOpen, 
-  PlayCircle, 
-  FileCheck, 
-  Settings, 
+import {
+  LayoutDashboard,
+  BookOpen,
+  PlayCircle,
+  FileCheck,
+  Settings,
   LogOut,
   ChevronLeft,
   ChevronRight,
   User,
-  Radio
+  Radio,
+  FlaskConical
 } from 'lucide-react';
 import { ROLE_LABELS, normalizeRole } from '../../services/eventEngine';
 
-export const Sidebar = ({ 
-  activeView, 
-  setActiveView, 
-  userRole, 
-  onSignOut, 
-  collapsed, 
+export const Sidebar = ({
+  activeView,
+  setActiveView,
+  userRole,
+  onSignOut,
+  collapsed,
   setCollapsed,
   hasActiveTraining = false
 }) => {
@@ -32,11 +33,12 @@ export const Sidebar = ({
     { id: 'scenarios', label: 'Scenarios', icon: BookOpen },
     { id: 'sessions', label: 'Training Sessions', icon: PlayCircle },
     { id: 'aar', label: 'Debriefs & Reports', icon: FileCheck },
+    { id: 'forensics', label: 'FOG Forensics', icon: FlaskConical, isForensics: true },
     { id: 'settings', label: 'Settings', icon: Settings }
   ];
 
   return (
-    <aside 
+    <aside
       style={{
         width: collapsed ? '72px' : '250px',
         backgroundColor: '#0F172A',
@@ -51,7 +53,7 @@ export const Sidebar = ({
       }}
     >
       {/* Brand Header */}
-      <div 
+      <div
         style={{
           padding: collapsed ? '16px 12px' : '18px 20px',
           borderBottom: '1px solid #1E293B',
@@ -75,7 +77,7 @@ export const Sidebar = ({
           )}
         </div>
 
-        <button 
+        <button
           onClick={() => setCollapsed(!collapsed)}
           style={{
             background: '#1E293B',
@@ -96,7 +98,7 @@ export const Sidebar = ({
 
       {/* User Role Badge */}
       {!collapsed && (
-        <div 
+        <div
           style={{
             margin: '12px 14px 4px',
             padding: '8px 12px',
@@ -149,19 +151,24 @@ export const Sidebar = ({
                   }}
                   title={item.label}
                 >
-                  <Icon 
-                    size={17} 
-                    style={{ 
-                      color: item.isLive ? '#EF4444' : (isActive ? '#FBBF24' : '#94A3B8'), 
-                      flexShrink: 0 
-                    }} 
+                  <Icon
+                    size={17}
+                    style={{
+                      color: item.isLive ? '#EF4444' : (item.isForensics ? (isActive ? '#FBBF24' : '#A78BFA') : (isActive ? '#FBBF24' : '#94A3B8')),
+                      flexShrink: 0
+                    }}
                   />
                   {!collapsed && (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexGrow: 1 }}>
-                      <span style={{ color: item.isLive ? '#FCA5A5' : 'inherit' }}>{item.label}</span>
+                      <span style={{ color: item.isLive ? '#FCA5A5' : (item.isForensics ? '#C4B5FD' : 'inherit') }}>{item.label}</span>
                       {item.isLive && (
                         <span style={{ fontSize: '9px', backgroundColor: '#DC2626', color: '#FFF', padding: '1px 5px', borderRadius: '2px', fontWeight: 'bold' }}>
                           LIVE
+                        </span>
+                      )}
+                      {item.isForensics && !isActive && (
+                        <span style={{ fontSize: '8px', backgroundColor: '#7C3AED', color: '#FFF', padding: '1px 4px', borderRadius: '2px', fontWeight: 'bold' }}>
+                          NEW
                         </span>
                       )}
                     </div>
