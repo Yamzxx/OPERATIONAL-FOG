@@ -15,7 +15,9 @@ import { WhitepaperModal } from './components/WhitepaperModal';
 import { DashboardShell } from './components/dashboard/DashboardShell';
 
 export function App() {
-  const [fontScale, setFontScale] = useState('md');
+  const [fontScale, setFontScale] = useState(() => {
+    return localStorage.getItem('op_fog_font_scale') || 'md';
+  });
   const [highContrast, setHighContrast] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
   const [isSignInOpen, setIsSignInOpen] = useState(false);
@@ -31,6 +33,13 @@ export function App() {
       document.body.removeAttribute('data-theme');
     }
   }, [highContrast]);
+
+  // Apply font scale attribute to document and persist in localStorage
+  useEffect(() => {
+    localStorage.setItem('op_fog_font_scale', fontScale);
+    document.documentElement.setAttribute('data-font-scale', fontScale);
+    document.body.setAttribute('data-font-scale', fontScale);
+  }, [fontScale]);
 
   const handleExploreTraining = () => {
     setActiveTab('modules');

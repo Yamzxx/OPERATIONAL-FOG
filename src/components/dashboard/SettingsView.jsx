@@ -84,9 +84,42 @@ export const SettingsView = ({
               <div style={{ fontSize: '12px', color: '#64748B' }}>Adjust text size across the workspace.</div>
             </div>
             <div style={{ display: 'flex', gap: '6px' }}>
-              <button className={`gov-utility-btn ${fontScale === 'sm' ? 'active' : ''}`} onClick={() => setFontScale('sm')}>A-</button>
-              <button className={`gov-utility-btn ${fontScale === 'md' ? 'active' : ''}`} onClick={() => setFontScale('md')}>A</button>
-              <button className={`gov-utility-btn ${fontScale === 'lg' ? 'active' : ''}`} onClick={() => setFontScale('lg')}>A+</button>
+              <button 
+                className={`gov-utility-btn ${fontScale === 'sm' ? 'active' : ''}`} 
+                onClick={() => {
+                  if (typeof setFontScale === 'function') {
+                    setFontScale((prev) => (prev === 'lg' ? 'md' : 'sm'));
+                  }
+                }}
+                aria-label="Decrease Font Size"
+                title="Decrease Font Size"
+              >
+                A-
+              </button>
+              <button 
+                className={`gov-utility-btn ${fontScale === 'md' ? 'active' : ''}`} 
+                onClick={() => {
+                  if (typeof setFontScale === 'function') {
+                    setFontScale('md');
+                  }
+                }}
+                aria-label="Reset Font Size"
+                title="Reset Font Size (Default)"
+              >
+                A
+              </button>
+              <button 
+                className={`gov-utility-btn ${fontScale === 'lg' ? 'active' : ''}`} 
+                onClick={() => {
+                  if (typeof setFontScale === 'function') {
+                    setFontScale((prev) => (prev === 'sm' ? 'md' : 'lg'));
+                  }
+                }}
+                aria-label="Increase Font Size"
+                title="Increase Font Size"
+              >
+                A+
+              </button>
             </div>
           </div>
         </div>
