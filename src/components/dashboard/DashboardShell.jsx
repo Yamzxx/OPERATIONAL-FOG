@@ -8,6 +8,7 @@ import { TrainingSessions } from './TrainingSessions';
 import { TrainingRoom } from './TrainingRoom';
 import { AfterActionReview } from './AfterActionReview';
 import { SettingsView } from './SettingsView';
+import { FogForensics } from './FogForensics';
 import { CreateMultiplayerModal } from './CreateMultiplayerModal';
 import { JoinSessionModal } from './JoinSessionModal';
 import { DemoGuide } from './DemoGuide';
@@ -276,13 +277,14 @@ export const DashboardShell = ({
       case 'sessions': return 'Training Exercise Sessions';
       case 'training-room': return 'Active Exercise Training Room';
       case 'aar': return 'After-Action Reviews (AAR)';
+      case 'forensics': return 'FOG Forensics — Decision Investigation Workstation';
       case 'settings': return 'Platform Settings';
       default: return 'Operational Fog Dashboard';
     }
   };
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--color-bg-light)' }}>
+    <div className="gov-dashboard-shell" style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--color-bg-light)' }}>
       {/* Left Sidebar */}
       <Sidebar 
         activeView={activeView}
@@ -389,6 +391,13 @@ export const DashboardShell = ({
             <AfterActionReview 
               aars={aars}
               onSaveInstructorNote={handleSaveInstructorNote}
+              userRole={currentUser?.role || 'instructor'}
+            />
+          )}
+
+          {activeView === 'forensics' && (
+            <FogForensics
+              aars={aars}
               userRole={currentUser?.role || 'instructor'}
             />
           )}

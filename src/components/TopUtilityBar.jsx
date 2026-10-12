@@ -34,6 +34,24 @@ export const TopUtilityBar = ({
     return () => clearInterval(interval);
   }, []);
 
+  const handleFontDecrease = () => {
+    if (typeof setFontScale === 'function') {
+      setFontScale((prev) => (prev === 'lg' ? 'md' : 'sm'));
+    }
+  };
+
+  const handleFontReset = () => {
+    if (typeof setFontScale === 'function') {
+      setFontScale('md');
+    }
+  };
+
+  const handleFontIncrease = () => {
+    if (typeof setFontScale === 'function') {
+      setFontScale((prev) => (prev === 'sm' ? 'md' : 'lg'));
+    }
+  };
+
   return (
     <div className="gov-utility-bar">
       <div className="gov-container">
@@ -55,22 +73,25 @@ export const TopUtilityBar = ({
             <Type size={13} />
             <button 
               className={`gov-utility-btn ${fontScale === 'sm' ? 'active' : ''}`}
-              onClick={() => setFontScale('sm')}
+              onClick={handleFontDecrease}
               aria-label="Decrease Font Size"
+              title="Decrease Font Size"
             >
               A-
             </button>
             <button 
               className={`gov-utility-btn ${fontScale === 'md' ? 'active' : ''}`}
-              onClick={() => setFontScale('md')}
+              onClick={handleFontReset}
               aria-label="Reset Font Size"
+              title="Reset Font Size (Default)"
             >
               A
             </button>
             <button 
               className={`gov-utility-btn ${fontScale === 'lg' ? 'active' : ''}`}
-              onClick={() => setFontScale('lg')}
+              onClick={handleFontIncrease}
               aria-label="Increase Font Size"
+              title="Increase Font Size"
             >
               A+
             </button>
