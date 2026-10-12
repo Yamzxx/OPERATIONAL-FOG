@@ -182,9 +182,32 @@ button {
   gap: 16px;
 }
 
+.gov-emblem-flag-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
 .gov-emblem-svg {
-  height: 64px;
+  height: 60px;
   width: auto;
+  object-fit: contain;
+  flex-shrink: 0;
+  display: block;
+}
+
+.gov-flag-svg {
+  flex-shrink: 0;
+  display: block;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.gov-header-separator {
+  height: 52px;
+  width: 1px;
+  background-color: #CBD5E1;
+  margin: 0 4px;
   flex-shrink: 0;
 }
 
@@ -232,6 +255,30 @@ button {
   color: #78350F;
   border-radius: 2px;
   max-width: 320px;
+}
+
+@media (max-width: 900px) {
+  .gov-header-inner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+}
+
+@media (max-width: 640px) {
+  .gov-identity {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .gov-emblem-svg {
+    height: 52px;
+  }
+  .gov-header-separator {
+    height: 44px;
+  }
+  .gov-main-title {
+    font-size: 22px;
+  }
 }
 
 /* Restrained Terracotta Navigation Bar */
