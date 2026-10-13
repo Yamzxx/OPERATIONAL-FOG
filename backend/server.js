@@ -17,7 +17,6 @@ import {
   calculateSharedAwareness,
   createEvidenceSnapshot,
   getDecisionTargetRoles,
-  isRoleAllowedForDecision,
   normalizeRole,
   resolveOptionBranchAndConsequence
 } from './services/simulationEngine.js';
@@ -1126,7 +1125,6 @@ app.post(['/api/exercises/:id/decisions', '/api/decisions'], async (req, res) =>
       wsManager.broadcastToRoom(exRow.session_code || exRow.id, {
         type: 'DECISION_SUBMITTED',
         exerciseId: exRow.id,
-        sessionCode: exRow.session_code,
         decision: savedDecision,
         activeBranch: nextBranch,
         consequence

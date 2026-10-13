@@ -44,16 +44,16 @@ export const TimelineReplay = ({ aar }) => {
       content: d.rationale,
       type: 'decision',
       recipientRole: d.submittedRole || 'all',
-      submittedBy: d.submittedBy || 'Operator',
       timeSec: d.elapsedSeconds !== undefined ? d.elapsedSeconds : ((d.elapsedMinutes || 0) * 60),
-      confidence: d.confidence,
+      confidence: d.confidencePercent !== undefined ? `${d.confidencePercent}%` : (d.confidence || '68%'),
       selectedOption: d.selectedOption,
       nextBranch: d.nextBranch,
       consequence: d.consequence,
       decisionPointId: d.decisionPointId,
       informationSources: d.informationSources,
       performanceScore: d.performanceScore,
-      difficultyAdaptation: d.difficultyAdaptation
+      difficultyAdaptation: d.difficultyAdaptation,
+      evidenceSnapshot: d.evidenceSnapshot
     }))
   ].sort((a, b) => a.timeSec - b.timeSec);
 
@@ -299,6 +299,12 @@ export const TimelineReplay = ({ aar }) => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
                     <span>[T+ {formatSecondsToMMSS(d.timeSec)}] {d.title}</span>
                     <span style={{ fontSize: '10px', color: 'var(--color-terracotta)', fontWeight: 'bold' }}>{d.submittedBy}</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px', display: 'flex', gap: '8px' }}>
+                    <span>Confidence: <strong style={{ color: '#0F172A' }}>{d.confidence}</strong></span>
+                    {d.evidenceSnapshot?.metrics?.informationAvailabilityPct !== undefined && (
+                      <span>• Info Avail: <strong style={{ color: '#B45309' }}>{d.evidenceSnapshot.metrics.informationAvailabilityPct}%</strong></span>
+                    )}
                   </div>
                   <div style={{ color: '#334155', marginTop: '4px' }}><strong>Rationale:</strong> {d.content}</div>
 

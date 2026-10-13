@@ -166,7 +166,6 @@ export const TrainingRoom = ({
       }
       // Real-time Decision Synchronization across clients & WebSocket rooms
       if ((event?.type === 'DECISION_SUBMITTED' || event?.type === 'DECISION_UPDATED') && (event?.payload?.decision || event?.decision)) {
-        const incomingDec = event.payload?.decision || event.decision;
         if (engineRef.current) {
           engineRef.current.applyDecision(incomingDec);
         }
@@ -177,28 +176,6 @@ export const TrainingRoom = ({
           }
           return [...prev, incomingDec];
         });
-      }
-      // Real-time Adaptive Difficulty Synchronization
-      if (event?.type === 'DIFFICULTY_ADAPTED') {
-        const newDiff = event?.payload?.scenarioDifficulty;
-        if (engineRef.current && newDiff) {
-          engineRef.current.scenarioDifficulty = newDiff;
-          if (event.payload.adaptation) {
-            engineRef.current.difficultyAdaptationsLog.push(event.payload.adaptation);
-          }
-        }
-        if (event?.payload?.adaptiveDifficultyEnabled !== undefined) {
-          setAdaptiveEnabled(Boolean(event.payload.adaptiveDifficultyEnabled));
-        }
-      }
-      if (event?.type === 'ADAPTIVE_MODE_UPDATED') {
-        if (event?.payload?.adaptiveDifficultyEnabled !== undefined) {
-          const enabled = Boolean(event.payload.adaptiveDifficultyEnabled);
-          setAdaptiveEnabled(enabled);
-          if (engineRef.current) {
-            engineRef.current.adaptiveDifficultyEnabled = enabled;
-          }
-        }
       }
       // Real-time Scenario Branch Synchronization
       if (event?.type === 'SCENARIO_BRANCH_UPDATED' && (event?.payload?.activeBranch || event?.activeBranch)) {
@@ -403,7 +380,7 @@ export const TrainingRoom = ({
       setDecisions(prev => [...prev, newDecision]);
     }
 
-    showToast(`Decision "${newDecision.title}" submitted at ${newDecision.elapsedTimeFormatted}. Branch [${newDecision.nextBranch}] activated!`, 'success');
+    showToast(`Decision "${newDecision.title}" submitted at ${newDecision.elapsedTimeFormatted}. Branch [${newDecision.nextBranch || 'Standard'}] activated & evidence snapshot captured!`, 'success');
 
     setDecisionTitle('');
     setSelectedOption('');
@@ -1604,7 +1581,6 @@ export const TrainingRoom = ({
                 );
               })()}
             </div>
-
             {decisions.length === 0 ? (
               <div style={{ padding: '16px', textAlign: 'center', color: '#64748B', backgroundColor: '#F8FAFC', borderRadius: '4px', border: '1px dashed #CBD5E1', fontSize: '13px' }}>
                 No trainee command decisions logged yet. When trainees submit decisions at scenario triggers, their choices and immutable Evidence Snapshots will appear here in real time.
@@ -1704,7 +1680,6 @@ export const TrainingRoom = ({
                           )}
                         </div>
                       )}
-
                       {/* Stated Rationale */}
                       <div style={{ fontSize: '13px', color: '#334155', margin: '8px 0', lineHeight: '1.4' }}>
                         <strong>Stated Rationale:</strong> {d.rationale}
@@ -1806,7 +1781,6 @@ export const TrainingRoom = ({
                           </div>
                         );
                       })()}
-
                       {/* Action to Inspect Evidence Snapshot */}
                       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
                         <button
