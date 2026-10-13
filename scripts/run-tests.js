@@ -2,6 +2,7 @@ import { spawnSync } from 'child_process';
 
 const testFiles = [
   'src/services/eventEngine.test.js',
+  'src/services/decisionEngine.test.js',
   'src/services/multiplayerEngine.test.js',
   'src/services/storageService.test.js',
   'backend/tests/api.test.js',

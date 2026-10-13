@@ -179,6 +179,7 @@ export const CreateScenarioModal = ({ isOpen, onClose, onSaveScenario }) => {
                     <option value="info">Info</option>
                     <option value="warning">Warning</option>
                     <option value="delay">Delay</option>
+                    <option value="DECISION_REQUIRED">Decision Point</option>
                   </select>
                   <button 
                     type="button" 

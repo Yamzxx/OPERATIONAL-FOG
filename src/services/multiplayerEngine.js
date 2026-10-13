@@ -7,7 +7,13 @@
 import { 
   normalizeRole, 
   getDecisionTargetRoles, 
-  isRoleAllowedForDecision 
+  isRoleAllowedForDecision,
+  resolveOptionBranchAndConsequence,
+  calculatePerformanceScore,
+  evaluateAdaptiveDifficulty,
+  normalizeDifficulty,
+  DIFFICULTY_LEVELS,
+  DIFFICULTY_ORDER
 } from './eventEngine.js';
 
 const MULTIPLAYER_STORAGE_KEY = 'op_fog_mp_sessions_v1';
@@ -362,8 +368,15 @@ class MultiplayerEngine {
 
   // Submit participant decision
   submitDecision(sessionCode, decisionData) {
-    const session = this.getSessionByCode(sessionCode);
-    if (!session) return null;
+    let session = this.getSessionByCode(sessionCode);
+    if (!session) {
+      session = {
+        id: sessionCode,
+        sessionCode: sessionCode,
+        name: 'Exercise Session',
+        decisions: []
+      };
+    }
 
     const submittedRole = normalizeRole(decisionData?.submittedRole || 'team_leader');
     const targetRoles = getDecisionTargetRoles(decisionData);
@@ -377,16 +390,263 @@ class MultiplayerEngine {
       }
     }
 
-    const newDecision = {
-      id: `dec-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      ...decisionData
+    // Resolve decision point, nextBranch, and consequence
+    const dp = (session.scenario?.events || []).find(ev => 
+      (ev.id === decisionData.decisionPointId || ev.id === decisionData.id) && (ev.requiresDecision || ev.type === 'DECISION_REQUIRED')
+    ) || (session.scenario?.events || []).find(ev => ev.requiresDecision || ev.type === 'DECISION_REQUIRED');
+
+    const selectedInput = decisionData.selectedOption || decisionData.selectedOptionId || decisionData.title;
+    const resolved = resolveOptionBranchAndConsequence(dp, selectedInput);
+
+    const nextBranch = decisionData.nextBranch || resolved.nextBranch;
+    const consequence = decisionData.consequence || resolved.consequence;
+    const selectedOption = decisionData.selectedOption || resolved.selectedOption;
+    const selectedOptionId = decisionData.selectedOptionId || resolved.selectedOptionId;
+
+    // Assemble scoring context
+    const currentDiff = session.scenarioDifficulty || 'Intermediate';
+    const scoreContext = {
+      decisionPoint: dp,
+      decisionScheduledTime: dp?.scheduledTimeSec || 0,
+      deliveredEvents: decisionData.deliveredEvents || [],
+      allEventsUpToNow: decisionData.allEventsUpToNow || [],
+      teamMessages: session.teamMessages || [],
+      sharedAwareness: session.sharedAwareness || 75
+    };
+    const performanceScore = decisionData.performanceScore || calculatePerformanceScore(decisionData, scoreContext);
+    const adaptEnabled = session.adaptiveDifficultyEnabled !== undefined ? session.adaptiveDifficultyEnabled : true;
+    const adaptationResult = evaluateAdaptiveDifficulty(currentDiff, performanceScore, { enabled: adaptEnabled });
+
+    const adaptationEntry = decisionData.difficultyAdaptation || {
+      id: `diff-adapt-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      decisionId: decisionData.id || `dec-${Date.now()}`,
+      decisionPointId: dp?.id || decisionData.decisionPointId || null,
+      decisionTitle: decisionData.title || (typeof selectedOption === 'object' ? selectedOption.label : selectedOption),
+      timestamp: decisionData.timestamp || new Date().toISOString(),
+      elapsedSeconds: decisionData.elapsedSeconds || 0,
+      previousDifficulty: adaptationResult.previousDifficulty,
+      newDifficulty: adaptationResult.newDifficulty,
+      adaptationDirection: adaptationResult.adaptationDirection,
+      isManualOverride: false,
+      triggerReason: adaptationResult.triggerReason,
+      performanceScore
     };
 
-    session.decisions = [...(session.decisions || []), newDecision];
+    const newDecision = {
+      id: decisionData.id || `dec-${Date.now()}`,
+      timestamp: decisionData.timestamp || new Date().toISOString(),
+      ...decisionData,
+      selectedOption,
+      selectedOptionId,
+      nextBranch,
+      consequence,
+      performanceScore,
+      difficultyAdaptation: adaptationEntry
+    };
+
+    // Update active branch and difficulty on session
+    session.activeBranch = nextBranch;
+    session.branchesHistory = [...(session.branchesHistory || []), nextBranch];
+    session.scenarioDifficulty = adaptationResult.newDifficulty;
+    session.difficultyAdaptationsLog = [...(session.difficultyAdaptationsLog || []), adaptationEntry];
+
+    if (consequence?.difficultyChange && consequence.difficultyChange !== 'none') {
+      session.scenarioDifficulty = normalizeDifficulty(consequence.difficultyChange);
+    }
+
+    const consequenceLogEntry = {
+      id: `conseq-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      decisionId: newDecision.id,
+      decisionPointId: dp?.id || newDecision.decisionPointId || null,
+      decisionTitle: newDecision.title,
+      selectedOption,
+      selectedOptionId,
+      nextBranch,
+      consequence,
+      informationAvailable: (decisionData.deliveredEvents || []).map(e => ({
+        id: e.id,
+        title: e.title,
+        domain: e.domain,
+        confidence: e.confidence,
+        status: e.status
+      })),
+      performanceScore,
+      difficultyAdaptation: adaptationEntry,
+      timestamp: newDecision.timestamp,
+      elapsedSeconds: newDecision.elapsedSeconds || 0,
+      submittedBy: newDecision.submittedBy,
+      submittedRole: newDecision.submittedRole
+    };
+    session.decisionConsequencesLog = [...(session.decisionConsequencesLog || []), consequenceLogEntry];
+
+    session.decisions = [...(session.decisions || []).filter(d => d.id !== newDecision.id), newDecision];
     this.updateSession(session);
-    this.broadcast('DECISION_SUBMITTED', { sessionCode, decision: newDecision });
+    this.broadcast('DECISION_SUBMITTED', { 
+      sessionCode, 
+      decision: newDecision,
+      activeBranch: nextBranch,
+      consequence,
+      consequenceLog: consequenceLogEntry,
+      performanceScore,
+      difficultyAdaptation: adaptationEntry,
+      scenarioDifficulty: session.scenarioDifficulty
+    });
+    this.broadcast('DIFFICULTY_ADAPTED', {
+      sessionCode,
+      adaptation: adaptationEntry,
+      scenarioDifficulty: session.scenarioDifficulty,
+      adaptiveDifficultyEnabled: adaptEnabled
+    });
+    this.broadcast('SCENARIO_BRANCH_UPDATED', {
+      sessionCode,
+      activeBranch: nextBranch,
+      consequence,
+      consequenceLog: consequenceLogEntry
+    });
+
+    // Send via WebSocket if connected
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'DECISION_SUBMITTED',
+        payload: {
+          sessionCode,
+          decision: newDecision,
+          activeBranch: nextBranch,
+          consequence
+        }
+      }));
+    }
+
+    // Also push to backend API asynchronously if available
+    if (typeof fetch !== 'undefined') {
+      fetch(`${API_BASE_URL}/exercises/${encodeURIComponent(session.sessionCode || sessionCode)}/decisions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Service-Id': decisionData.submittedBy || 'Operator',
+          'X-User-Role': decisionData.submittedRole || 'team_leader'
+        },
+        body: JSON.stringify(newDecision)
+      })
+        .then(res => res.json())
+        .then(apiDecision => {
+          if (apiDecision?.id) {
+            session.decisions = (session.decisions || []).map(d => d.id === apiDecision.id ? { ...d, ...apiDecision } : d);
+            this.updateSession(session);
+            this.broadcast('DECISION_UPDATED', { sessionCode, decision: apiDecision });
+          }
+        })
+        .catch(() => {});
+    }
+
     return newDecision;
+  }
+
+  // Directly sets active scenario branch (Instructor or authorized role only)
+  setScenarioBranch(sessionCode, branchId, userRole = 'team_leader') {
+    const session = this.getSessionByCode(sessionCode);
+    if (!session) return { error: 'Session not found', rejected: true };
+    const norm = normalizeRole(userRole);
+    if (norm !== 'instructor' && norm !== 'team_leader') {
+      return {
+        error: `Forbidden: Role "${userRole}" is not authorized to alter scenario branches directly.`,
+        rejected: true
+      };
+    }
+    session.activeBranch = branchId;
+    session.branchesHistory = [...(session.branchesHistory || []), branchId];
+    this.updateSession(session);
+    this.broadcast('SCENARIO_BRANCH_UPDATED', { sessionCode, activeBranch: branchId });
+    return session;
+  }
+
+  // Toggles adaptive difficulty engine (Instructor or authorized role only)
+  toggleAdaptiveDifficulty(sessionCode, enabled, userRole = 'instructor') {
+    const session = this.getSessionByCode(sessionCode);
+    if (!session) return { error: 'Session not found', rejected: true };
+    const norm = normalizeRole(userRole);
+    if (norm !== 'instructor' && norm !== 'lead_evaluator') {
+      return {
+        error: `Forbidden: Role "${userRole}" is not authorized to toggle adaptive difficulty mode.`,
+        rejected: true
+      };
+    }
+
+    session.adaptiveDifficultyEnabled = Boolean(enabled);
+    this.updateSession(session);
+    this.broadcast('ADAPTIVE_MODE_UPDATED', {
+      sessionCode,
+      adaptiveDifficultyEnabled: session.adaptiveDifficultyEnabled,
+      updatedBy: norm
+    });
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'TOGGLE_ADAPTIVE_MODE',
+        payload: { sessionCode, enabled: session.adaptiveDifficultyEnabled, userRole: norm }
+      }));
+    }
+
+    return { success: true, adaptiveDifficultyEnabled: session.adaptiveDifficultyEnabled };
+  }
+
+  // Instructor manual override for scenario difficulty
+  overrideDifficulty(sessionCode, targetDifficulty, reason = '', userRole = 'instructor') {
+    const session = this.getSessionByCode(sessionCode);
+    if (!session) return { error: 'Session not found', rejected: true };
+    const norm = normalizeRole(userRole);
+    if (norm !== 'instructor' && norm !== 'lead_evaluator') {
+      return {
+        error: `Forbidden: Role "${userRole}" is not authorized to override scenario difficulty.`,
+        rejected: true
+      };
+    }
+
+    const prevDiff = session.scenarioDifficulty || 'Intermediate';
+    const adaptResult = evaluateAdaptiveDifficulty(prevDiff, null, {
+      isManualOverride: true,
+      overrideTarget: targetDifficulty,
+      overrideReason: reason
+    });
+
+    const adaptEntry = {
+      id: `diff-override-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      decisionId: null,
+      decisionTitle: 'Instructor Manual Override',
+      timestamp: new Date().toISOString(),
+      previousDifficulty: adaptResult.previousDifficulty,
+      newDifficulty: adaptResult.newDifficulty,
+      adaptationDirection: 'manual_override',
+      isManualOverride: true,
+      triggerReason: adaptResult.triggerReason,
+      performanceScore: null
+    };
+
+    session.scenarioDifficulty = adaptResult.newDifficulty;
+    session.difficultyAdaptationsLog = [...(session.difficultyAdaptationsLog || []), adaptEntry];
+    this.updateSession(session);
+
+    this.broadcast('DIFFICULTY_ADAPTED', {
+      sessionCode,
+      adaptation: adaptEntry,
+      scenarioDifficulty: session.scenarioDifficulty,
+      adaptiveDifficultyEnabled: session.adaptiveDifficultyEnabled !== undefined ? session.adaptiveDifficultyEnabled : true,
+      isManualOverride: true
+    });
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'OVERRIDE_DIFFICULTY',
+        payload: {
+          sessionCode,
+          difficulty: targetDifficulty,
+          reason,
+          userRole: norm
+        }
+      }));
+    }
+
+    return { success: true, adaptation: adaptEntry, scenarioDifficulty: session.scenarioDifficulty };
   }
 
   // Start exercise
@@ -477,6 +737,56 @@ class MultiplayerEngine {
               if (msg.payload?.disruptionsLog !== undefined) {
                 session.disruptionsLog = msg.payload.disruptionsLog;
               }
+              this.updateSession(session);
+            }
+          }
+          if (msg.type === 'DECISION_SUBMITTED') {
+            const dec = msg.payload?.decision || msg.decision;
+            const code = msg.payload?.sessionCode || msg.sessionCode || sessionCode;
+            const session = this.getSessionByCode(code);
+            if (session && dec) {
+              const exists = (session.decisions || []).some(d => d.id === dec.id);
+              if (!exists) {
+                session.decisions = [...(session.decisions || []), dec];
+              }
+              if (msg.payload?.activeBranch) {
+                session.activeBranch = msg.payload.activeBranch;
+              }
+              if (msg.payload?.scenarioDifficulty) {
+                session.scenarioDifficulty = msg.payload.scenarioDifficulty;
+              }
+              if (msg.payload?.difficultyAdaptation) {
+                session.difficultyAdaptationsLog = [...(session.difficultyAdaptationsLog || []), msg.payload.difficultyAdaptation];
+              }
+              this.updateSession(session);
+            }
+          }
+          if (msg.type === 'DIFFICULTY_ADAPTED') {
+            const code = msg.payload?.sessionCode || sessionCode;
+            const session = this.getSessionByCode(code);
+            if (session) {
+              if (msg.payload?.scenarioDifficulty) {
+                session.scenarioDifficulty = msg.payload.scenarioDifficulty;
+              }
+              if (msg.payload?.adaptation) {
+                session.difficultyAdaptationsLog = [...(session.difficultyAdaptationsLog || []), msg.payload.adaptation];
+              }
+              this.updateSession(session);
+            }
+          }
+          if (msg.type === 'ADAPTIVE_MODE_UPDATED') {
+            const code = msg.payload?.sessionCode || sessionCode;
+            const session = this.getSessionByCode(code);
+            if (session && msg.payload?.adaptiveDifficultyEnabled !== undefined) {
+              session.adaptiveDifficultyEnabled = Boolean(msg.payload.adaptiveDifficultyEnabled);
+              this.updateSession(session);
+            }
+          }
+          if (msg.type === 'SCENARIO_BRANCH_UPDATED') {
+            const code = msg.payload?.sessionCode || sessionCode;
+            const session = this.getSessionByCode(code);
+            if (session && msg.payload?.activeBranch) {
+              session.activeBranch = msg.payload.activeBranch;
               this.updateSession(session);
             }
           }

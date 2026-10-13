@@ -84,8 +84,6 @@ const DEFAULT_SCENARIOS = [
         }
       },
       {
-<<<<<<< Updated upstream
-=======
         id: 'sih-ev-dp-1',
         time: '01:00',
         title: 'DECISION REQUIRED: Convoy Movement Directive',
@@ -98,10 +96,72 @@ const DEFAULT_SCENARIOS = [
         confidence: '80%',
         decisionPrompt: 'Air radar reports unidentified drones while signals intercept warns of radar decoys. Satellite radio is jammed and Convoy Bravo is halted at Mile 44. As Team Leader, synthesize your squad reports and issue movement directive:',
         decisionOptions: [
-          'Request Verification & hold Convoy Bravo in cover',
-          'Advance Convoy Bravo immediately along Route Alpha',
-          'Dispatch Land scout team for immediate visual check',
-          'Reroute entire squad through alternate mountain corridor'
+          {
+            id: 'opt-verify',
+            label: 'Request Verification & hold Convoy Bravo in cover',
+            nextBranch: 'branch_verify',
+            consequence: {
+              description: 'Squad holds in defilade while Cyber/EW filters false telemetry. Scout confirms enemy decoy beacons at Mile 44 and uncovers hidden ambush site on northern slope.',
+              difficultyChange: 'Decreased (Tactical Advantage)',
+              communicationConditions: {
+                type: 'restore',
+                target: 'all',
+                note: 'Satellite link backup channel restored'
+              },
+              outcome: 'Favorable: Squad avoids ambush and identifies hostile decoys with zero friendly casualties.'
+            }
+          },
+          {
+            id: 'opt-advance',
+            label: 'Advance Convoy Bravo immediately along Route Alpha',
+            nextBranch: 'branch_advance',
+            consequence: {
+              description: 'Convoy moves forward blind without air coverage. At Mile 46, hostile RPG fire pins down lead vehicles. Intense electronic jamming blinds Land unit.',
+              difficultyChange: 'Increased (High Friction)',
+              communicationConditions: {
+                type: 'dropout',
+                target: 'land_member',
+                severity: 'high',
+                duration: 60,
+                note: 'Hostile directional jamming cuts off Land unit'
+              },
+              outcome: 'Severe Friction: Lead vehicle disabled; squad pinned down under heavy radio jamming.'
+            }
+          },
+          {
+            id: 'opt-scout',
+            label: 'Dispatch Land scout team for immediate visual check',
+            nextBranch: 'branch_scout',
+            consequence: {
+              description: 'Scout team moves ahead on foot. Visual reconnaissance confirms enemy drone decoys on ridge at T+01:25. Mountain terrain causes RF shadow delay for Land team.',
+              difficultyChange: 'Moderate',
+              communicationConditions: {
+                type: 'delay',
+                target: 'land_member',
+                severity: 'medium',
+                duration: 45,
+                note: 'Mountain ridge RF shielding causes 45s tactical telemetry delay'
+              },
+              outcome: 'Cautious Advance: Enemy decoys identified, but scout unit experiences 45s comm lag.'
+            }
+          },
+          {
+            id: 'opt-reroute',
+            label: 'Reroute entire squad through alternate mountain corridor',
+            nextBranch: 'branch_reroute',
+            consequence: {
+              description: 'Squad diverts through western mountain defile. Mountain passes cause heavy satellite link packet loss, but completely bypasses enemy ambush sector.',
+              difficultyChange: 'Increased (Telemetry Loss)',
+              communicationConditions: {
+                type: 'incomplete',
+                target: 'air_member',
+                severity: 'high',
+                duration: 60,
+                note: 'Narrow canyon walls degrade aerial radar telemetry'
+              },
+              outcome: 'Safe Bypass with High Latency: Ambush bypassed, but squad loses air coordination for 60s.'
+            }
+          }
         ],
         content: 'TACTICAL DECISION REQUIRED: Review received field reports from Land, Air, and Cyber/EW and issue the convoy movement directive.',
         instructorNotes: 'Ground Truth: Real surveillance drones approaching, but enemy jammer active on Hill 52. Team Leader has only received delayed scout report and missing air telemetry.',
@@ -111,7 +171,6 @@ const DEFAULT_SCENARIOS = [
         }
       },
       {
->>>>>>> Stashed changes
         id: 'sih-ev-4',
         time: '01:15',
         title: 'Supply Convoy Bravo Status',
@@ -128,6 +187,74 @@ const DEFAULT_SCENARIOS = [
         }
       },
       {
+        id: 'sih-ev-bv-1',
+        time: '01:25',
+        title: 'UAV Telemetry: Ambush Coordinates Confirmed',
+        domain: 'AIR',
+        type: 'alert',
+        branch: 'branch_verify',
+        confidence: '95%',
+        content: 'Additional UAV report arrives: thermal scans detect enemy anti-tank fire team lying in ambush at Mile 48. Convoy Bravo holding safely in defilade.',
+        instructorNotes: 'Branch B (Verify): UAV confirms enemy ambush coordinates while squad holds safely in cover.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'High-altitude UAV confirms enemy ambush team at Mile 48. Convoy cover order verified effective.', confidence: '95%' },
+          land_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'UAV feed confirms enemy positions ahead at Mile 48. Hold defilade position.', confidence: '95%' },
+          air_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Direct video downlink: thermal bloom of 4 hostile combatants detected at Mile 48 tree line.', confidence: '98%' },
+          cyber_ew_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Enemy tactical radio intercept confirms squad halted out of their effective firing range.', confidence: '90%' }
+        }
+      },
+      {
+        id: 'sih-ev-ba-1',
+        time: '01:25',
+        title: 'CRITICAL ALERT: Convoy Under Heavy Fire',
+        domain: 'LAND',
+        type: 'alert',
+        branch: 'branch_advance',
+        confidence: '95%',
+        content: 'Lead vehicle ambushed at Mile 46! Hostile RPG fire pins down squad in open valley corridor. Directional jammers deafen tactical mesh.',
+        instructorNotes: 'Branch Advance: Blind rush into Sector Alpha leads directly into hostile kill zone.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'delayed', delaySeconds: 20, content: 'Urgent distress: Convoy elements engaged under direct enemy rocket fire at Mile 46!', confidence: '90%' },
+          land_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'UNDER FIRE! Lead vehicle immobilized by RPG at Mile 46. Taking heavy machine gun fire!', confidence: '95%' },
+          air_member: { deliveryBehavior: 'conflicting', delaySeconds: 0, content: 'Smoke obscuring Mile 46. Multiple muzzle flashes visible in valley floor.', confidence: '75%' },
+          cyber_ew_member: { deliveryBehavior: 'incomplete', delaySeconds: 0, content: 'Emergency distress beacon [SIGNAL JAMMED] - Land unit beacon degraded...', confidence: 'Partial' }
+        }
+      },
+      {
+        id: 'sih-ev-bs-1',
+        time: '01:25',
+        title: 'Scout Recon: Hostile Decoy Transmitters Found',
+        domain: 'LAND',
+        type: 'info',
+        branch: 'branch_scout',
+        confidence: '90%',
+        content: 'Scout team spots stationary radio decoy transmitters along Ridge 3. Enemy air radar blips confirmed as simulated decoys.',
+        instructorNotes: 'Branch Scout: Foot patrol visually verifies electronic decoys.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'delayed', delaySeconds: 25, content: 'Scout dispatch arrives late: Enemy using ground decoys to spoof aerial radar.', confidence: '80%' },
+          land_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Visual contact confirmed: stationary radio decoys found on Ridge 3.', confidence: '90%' },
+          air_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Land scout confirms radar anomalies are decoys. Air corridor cleared.', confidence: '85%' },
+          cyber_ew_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Decoy broadcast frequencies logged and filtered from main receiver.', confidence: '95%' }
+        }
+      },
+      {
+        id: 'sih-ev-br-1',
+        time: '01:25',
+        title: 'Western Pass Defile Transit Initiated',
+        domain: 'JOINT',
+        type: 'info',
+        branch: 'branch_reroute',
+        confidence: '85%',
+        content: 'Convoy successfully enters Western Mountain Pass. Terrain blocks enemy radar, though satellite link experiences heavy multipath reflection.',
+        instructorNotes: 'Branch Reroute: Safe transit initiated through western corridor.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Western Pass defile entered. Ambush zone successfully bypassed.', confidence: '85%' },
+          land_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Western pass road is rough but passable. Convoy moving at 20 km/h.', confidence: '85%' },
+          air_member: { deliveryBehavior: 'incomplete', delaySeconds: 0, content: 'High canyon walls [TELEMETRY PARTIAL] - aerial visual line-of-sight obstructed.', confidence: 'Partial' },
+          cyber_ew_member: { deliveryBehavior: 'delayed', delaySeconds: 20, content: 'Western pass signal reflection causing 20s packet delay.', confidence: '75%' }
+        }
+      },
+      {
         id: 'sih-ev-5',
         time: '01:45',
         title: 'Command Directive: Move to Extraction',
@@ -141,6 +268,40 @@ const DEFAULT_SCENARIOS = [
           land_member: { deliveryBehavior: 'delayed', delaySeconds: 30, content: 'Advance order received with delay: timed for 02:00. Verify positions.', confidence: '80%' },
           air_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Headquarters orders advance to Extraction Point at 02:00. Air support aligned.', confidence: '90%' },
           cyber_ew_member: { deliveryBehavior: 'delayed', delaySeconds: 20, content: 'Advance order received with delay. Electronic clearance requested.', confidence: '85%' }
+        }
+      },
+      {
+        id: 'sih-ev-bv-2',
+        time: '02:00',
+        title: 'Counter-Jamming Strike Neutralizes Hill 52',
+        domain: 'CYBER',
+        type: 'info',
+        branch: 'branch_verify',
+        confidence: '95%',
+        content: 'Precision electronic counter-strike knocks out enemy directional jammer on Hill 52. Full squad communications restored!',
+        instructorNotes: 'Branch Verify: Signals team eliminates hostile jammer with zero casualties.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Hostile jammer on Hill 52 disabled. Full squad communications and data links online.', confidence: '95%' },
+          land_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Radio clarity restored. All squad tactical links loud and clear.', confidence: '95%' },
+          air_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Air telemetry link back to 100% operational bandwidth.', confidence: '95%' },
+          cyber_ew_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Electronic warfare sector clear. Hill 52 signal source eliminated.', confidence: '99%' }
+        }
+      },
+      {
+        id: 'sih-ev-ba-2',
+        time: '02:00',
+        title: 'Emergency Evacuation & Smoke Screen Ordered',
+        domain: 'JOINT',
+        type: 'alert',
+        branch: 'branch_advance',
+        confidence: '90%',
+        content: 'Heavy casualties narrowly averted by deploying emergency thermal smoke screen. Convoy Bravo forced into tactical withdrawal.',
+        instructorNotes: 'Branch Advance: Forced retreat under smoke cover.',
+        roleVariations: {
+          team_leader: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Tactical withdrawal ordered under smoke screen. Convoy Bravo vehicle 1 towed.', confidence: '85%' },
+          land_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Smoke deployed. Covering fire enabled withdrawal from Mile 46 kill zone.', confidence: '90%' },
+          air_member: { deliveryBehavior: 'normal', delaySeconds: 0, content: 'Air cover overhead tracking retreating hostile mortar unit.', confidence: '85%' },
+          cyber_ew_member: { deliveryBehavior: 'delayed', delaySeconds: 25, content: 'Withdrawal coordinates confirmed with delay.', confidence: '80%' }
         }
       },
       {
@@ -265,6 +426,14 @@ export async function migrate() {
     await client.query(`
       ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS elapsed_seconds INTEGER DEFAULT 0;
     `).catch(err => console.log('Note: participant_decisions.elapsed_seconds already present:', err.message));
+
+    await client.query(`
+      ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS evidence_snapshot_json JSONB DEFAULT '{}'::jsonb;
+    `).catch(err => console.log('Note: participant_decisions.evidence_snapshot_json already present:', err.message));
+
+    await client.query(`
+      ALTER TABLE participant_decisions ADD COLUMN IF NOT EXISTS sources_used_json JSONB DEFAULT '[]'::jsonb;
+    `).catch(err => console.log('Note: participant_decisions.sources_used_json already present:', err.message));
 
     console.log('Column migrations applied.');
 

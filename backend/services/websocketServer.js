@@ -4,7 +4,12 @@ import {
   DISRUPTION_TYPE_LABELS, 
   normalizeRole,
   getDecisionTargetRoles,
-  isRoleAllowedForDecision
+  isRoleAllowedForDecision,
+  resolveOptionBranchAndConsequence,
+  calculatePerformanceScore,
+  evaluateAdaptiveDifficulty,
+  normalizeDifficulty,
+  DIFFICULTY_LEVELS
 } from './simulationEngine.js';
 
 /**
@@ -201,9 +206,186 @@ export class ServerWebSocketManager {
           }
         }
 
+        const nextBranch = decision?.nextBranch || 'branch_default';
+        const consequence = decision?.consequence || null;
+
+        // Update server-side session state
+        const state = this.sessionState.get(code) || { activeDisruptions: [], disruptionsLog: [] };
+        state.activeBranch = nextBranch;
+        state.branchesHistory = [...(state.branchesHistory || []), nextBranch];
+
+        // Evaluate performance score & adaptive difficulty
+        const currentDiff = state.scenarioDifficulty || 'Intermediate';
+        const perfScore = decision?.performanceScore || calculatePerformanceScore(decision, {
+          sharedAwareness: state.sharedAwareness || 75
+        });
+        const adaptEnabled = state.adaptiveDifficultyEnabled !== undefined ? state.adaptiveDifficultyEnabled : true;
+        const adaptResult = evaluateAdaptiveDifficulty(currentDiff, perfScore, { enabled: adaptEnabled });
+
+        const adaptEntry = decision?.difficultyAdaptation || {
+          id: `diff-adapt-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          decisionId: decision?.id,
+          decisionTitle: decision?.title,
+          previousDifficulty: adaptResult.previousDifficulty,
+          newDifficulty: adaptResult.newDifficulty,
+          adaptationDirection: adaptResult.adaptationDirection,
+          isManualOverride: false,
+          triggerReason: adaptResult.triggerReason,
+          performanceScore: perfScore,
+          timestamp: new Date().toISOString()
+        };
+
+        state.scenarioDifficulty = adaptResult.newDifficulty;
+        state.difficultyAdaptationsLog = [...(state.difficultyAdaptationsLog || []), adaptEntry];
+        this.sessionState.set(code, state);
+
+        const enrichedDecision = {
+          ...decision,
+          performanceScore: perfScore,
+          difficultyAdaptation: adaptEntry
+        };
+
         this.broadcastToRoom(code, {
           type: 'DECISION_SUBMITTED',
-          payload: { sessionCode: code, decision }
+          payload: { 
+            sessionCode: code, 
+            decision: enrichedDecision, 
+            activeBranch: nextBranch, 
+            consequence,
+            performanceScore: perfScore,
+            difficultyAdaptation: adaptEntry,
+            scenarioDifficulty: adaptResult.newDifficulty
+          }
+        });
+
+        this.broadcastToRoom(code, {
+          type: 'DIFFICULTY_ADAPTED',
+          payload: {
+            sessionCode: code,
+            adaptation: adaptEntry,
+            scenarioDifficulty: adaptResult.newDifficulty,
+            adaptiveDifficultyEnabled: adaptEnabled
+          }
+        });
+
+        this.broadcastToRoom(code, {
+          type: 'SCENARIO_BRANCH_UPDATED',
+          payload: { 
+            sessionCode: code, 
+            activeBranch: nextBranch, 
+            consequence 
+          }
+        });
+        break;
+      }
+
+      case 'TOGGLE_ADAPTIVE_MODE': {
+        const { sessionCode, enabled, userRole, role: payloadRole } = payload || {};
+        const code = (sessionCode || ws.sessionCode || 'DEFAULT').toUpperCase();
+        const role = normalizeRole(userRole || payloadRole || ws.role || ws.userRole || 'trainee');
+
+        if (role !== 'instructor' && role !== 'lead_evaluator') {
+          this.sendToSocket(ws, {
+            type: 'ERROR',
+            code: 'FORBIDDEN_ADAPTIVE_TOGGLE',
+            error: `Role "${role}" is not authorized to toggle adaptive difficulty mode.`
+          });
+          break;
+        }
+
+        const state = this.sessionState.get(code) || { activeDisruptions: [], disruptionsLog: [] };
+        state.adaptiveDifficultyEnabled = Boolean(enabled);
+        this.sessionState.set(code, state);
+
+        this.broadcastToRoom(code, {
+          type: 'ADAPTIVE_MODE_UPDATED',
+          payload: {
+            sessionCode: code,
+            adaptiveDifficultyEnabled: state.adaptiveDifficultyEnabled,
+            updatedBy: role
+          }
+        });
+        break;
+      }
+
+      case 'OVERRIDE_DIFFICULTY': {
+        const { sessionCode, difficulty, reason, userRole, role: payloadRole } = payload || {};
+        const code = (sessionCode || ws.sessionCode || 'DEFAULT').toUpperCase();
+        const role = normalizeRole(userRole || payloadRole || ws.role || ws.userRole || 'trainee');
+
+        if (role !== 'instructor' && role !== 'lead_evaluator') {
+          this.sendToSocket(ws, {
+            type: 'ERROR',
+            code: 'FORBIDDEN_DIFFICULTY_OVERRIDE',
+            error: `Role "${role}" is not authorized to override scenario difficulty.`
+          });
+          break;
+        }
+
+        const state = this.sessionState.get(code) || { activeDisruptions: [], disruptionsLog: [] };
+        const prevDiff = state.scenarioDifficulty || 'Intermediate';
+        const adaptResult = evaluateAdaptiveDifficulty(prevDiff, null, {
+          isManualOverride: true,
+          overrideTarget: difficulty,
+          overrideReason: reason
+        });
+
+        const adaptEntry = {
+          id: `diff-override-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          decisionId: null,
+          decisionTitle: 'Instructor Manual Override',
+          previousDifficulty: adaptResult.previousDifficulty,
+          newDifficulty: adaptResult.newDifficulty,
+          adaptationDirection: 'manual_override',
+          isManualOverride: true,
+          triggerReason: adaptResult.triggerReason,
+          performanceScore: null,
+          timestamp: new Date().toISOString()
+        };
+
+        state.scenarioDifficulty = adaptResult.newDifficulty;
+        state.difficultyAdaptationsLog = [...(state.difficultyAdaptationsLog || []), adaptEntry];
+        this.sessionState.set(code, state);
+
+        this.broadcastToRoom(code, {
+          type: 'DIFFICULTY_ADAPTED',
+          payload: {
+            sessionCode: code,
+            adaptation: adaptEntry,
+            scenarioDifficulty: adaptResult.newDifficulty,
+            adaptiveDifficultyEnabled: state.adaptiveDifficultyEnabled !== undefined ? state.adaptiveDifficultyEnabled : true,
+            isManualOverride: true
+          }
+        });
+        break;
+      }
+
+      case 'SET_BRANCH': {
+        const { sessionCode, branchId, branchKey, userRole, role: payloadRole } = payload || {};
+        const code = (sessionCode || ws.sessionCode || 'DEFAULT').toUpperCase();
+        const role = normalizeRole(userRole || payloadRole || ws.role || ws.userRole || 'trainee');
+        const targetBranch = branchId || branchKey;
+
+        if (role !== 'instructor' && role !== 'lead_evaluator') {
+          this.sendToSocket(ws, {
+            type: 'ERROR',
+            code: 'FORBIDDEN_BRANCH_MANIPULATION',
+            error: `Role "${role}" is not authorized to manually manipulate scenario branches.`
+          });
+          break;
+        }
+
+        const state = this.sessionState.get(code) || { activeDisruptions: [], disruptionsLog: [] };
+        state.activeBranch = targetBranch;
+        state.branchesHistory = [...(state.branchesHistory || []), targetBranch];
+        this.sessionState.set(code, state);
+
+        this.broadcastToRoom(code, {
+          type: 'SCENARIO_BRANCH_UPDATED',
+          payload: {
+            sessionCode: code,
+            activeBranch: targetBranch
+          }
         });
         break;
       }

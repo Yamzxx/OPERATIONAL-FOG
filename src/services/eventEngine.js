@@ -100,6 +100,34 @@ export const RECIPIENT_ROLES = {
   SIGNALS: 'signals'
 };
 
+export const DIFFICULTY_LEVELS = {
+  FUNDAMENTAL: 'Fundamental',
+  INTERMEDIATE: 'Intermediate',
+  ADVANCED: 'Advanced',
+  HIGH_FRICTION: 'High Friction'
+};
+
+export const DIFFICULTY_ORDER = [
+  'Fundamental',
+  'Intermediate',
+  'Advanced',
+  'High Friction'
+];
+
+/**
+ * Normalizes difficulty labels into standard 4-tier scale:
+ * Fundamental | Intermediate | Advanced | High Friction
+ */
+export function normalizeDifficulty(diff) {
+  if (!diff) return DIFFICULTY_LEVELS.INTERMEDIATE;
+  const clean = String(diff).trim().toLowerCase();
+  if (clean === 'easy' || clean === 'fundamental' || clean === 'low') return DIFFICULTY_LEVELS.FUNDAMENTAL;
+  if (clean === 'intermediate' || clean === 'medium' || clean === 'standard') return DIFFICULTY_LEVELS.INTERMEDIATE;
+  if (clean === 'advanced' || clean === 'hard') return DIFFICULTY_LEVELS.ADVANCED;
+  if (clean === 'high friction' || clean === 'high' || clean === 'severe') return DIFFICULTY_LEVELS.HIGH_FRICTION;
+  return DIFFICULTY_LEVELS.INTERMEDIATE;
+}
+
 /**
  * Normalizes any role string into canonical trainee roles.
  */
@@ -189,9 +217,10 @@ export function applyDisruptionsToDeliveredEvent(delEv, activeDisruptions = []) 
     modified.deliveredToParticipant = false;
   } else if (type === 'delay') {
     let extraSec = 30;
-    if (severity === 'low') extraSec = 15;
-    if (severity === 'medium') extraSec = 30;
-    if (severity === 'high') extraSec = 60;
+    if (severity === 'slight' || severity === 'minimal') extraSec = 8;
+    else if (severity === 'low') extraSec = 15;
+    else if (severity === 'medium') extraSec = 30;
+    else if (severity === 'high') extraSec = 60;
 
     modified.deliveryBehavior = DELIVERY_BEHAVIORS.DELAYED;
     modified.delaySeconds = (modified.delaySeconds || 0) + extraSec;
@@ -327,6 +356,487 @@ export function generateDeliveredEvent(generatedEvent, role, sessionSeed = 'OP_F
 }
 
 /**
+ * Normalizes a decision option into a structured option object with nextBranch and consequence.
+ */
+export function normalizeDecisionOption(opt, index = 0) {
+  if (!opt) return null;
+  if (typeof opt === 'string') {
+    const slug = opt.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 24).replace(/^_+|_+$/g, '');
+    const branchKey = `branch_${slug || index}`;
+    return {
+      id: `opt-${index}-${slug || index}`,
+      label: opt,
+      text: opt,
+      nextBranch: branchKey,
+      consequence: {
+        description: `Squad executes directive: "${opt}". Subsequent scenario timeline and communication conditions adapt.`,
+        difficultyChange: 'none',
+        communicationConditions: null,
+        outcome: `Directive executed: ${opt}`
+      }
+    };
+  }
+
+  const label = opt.label || opt.text || opt.title || `Option ${index + 1}`;
+  const slug = (opt.nextBranch || opt.branchId || label).toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 24).replace(/^_+|_+$/g, '');
+  const nextBranch = opt.nextBranch || opt.branchId || `branch_${slug || index}`;
+
+  return {
+    id: opt.id || `opt-${index}`,
+    label,
+    text: label,
+    nextBranch,
+    consequence: opt.consequence || {
+      description: opt.description || `Tactical directive selected: ${label}`,
+      difficultyChange: opt.difficultyChange || 'none',
+      communicationConditions: opt.communicationConditions || null,
+      outcome: opt.outcome || `Executed option: ${label}`
+    }
+  };
+}
+
+/**
+ * Resolves the selected option, resulting nextBranch, and consequence from a decision point.
+ */
+export function resolveOptionBranchAndConsequence(decisionPoint, selectedOptionOrId) {
+  if (!decisionPoint || !decisionPoint.decisionOptions || decisionPoint.decisionOptions.length === 0) {
+    const fallbackText = typeof selectedOptionOrId === 'string' ? selectedOptionOrId : 'Default Tactical Action';
+    return {
+      selectedOption: fallbackText,
+      selectedOptionId: 'opt-default',
+      nextBranch: 'branch_default',
+      consequence: {
+        description: `Tactical directive executed: "${fallbackText}".`,
+        difficultyChange: 'none',
+        communicationConditions: null,
+        outcome: 'Standard operational continuation.'
+      }
+    };
+  }
+
+  const normalizedOptions = decisionPoint.decisionOptions.map((opt, i) => normalizeDecisionOption(opt, i));
+  const cleanQuery = typeof selectedOptionOrId === 'string' ? selectedOptionOrId.trim() : '';
+
+  // Match by id or label or text
+  const match = normalizedOptions.find(o => 
+    o.id === cleanQuery || 
+    o.label === cleanQuery || 
+    o.text === cleanQuery ||
+    o.label.toLowerCase() === cleanQuery.toLowerCase()
+  );
+
+  if (match) {
+    return {
+      selectedOption: match,
+      selectedOptionId: match.id,
+      selectedOptionLabel: match.label,
+      nextBranch: match.nextBranch,
+      consequence: match.consequence
+    };
+  }
+
+  // Fallback for custom entries
+  const customOpt = normalizeDecisionOption(cleanQuery || 'Custom Directive');
+  return {
+    selectedOption: customOpt,
+    selectedOptionId: 'opt-custom',
+    selectedOptionLabel: customOpt.label,
+    nextBranch: `branch_${cleanQuery.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 20) || 'custom'}`,
+    consequence: {
+      description: `Custom directive executed: "${cleanQuery}".`,
+      difficultyChange: 'none',
+      communicationConditions: null,
+      outcome: `Adapted to custom squad directive: ${cleanQuery}`
+    }
+  };
+}
+
+/**
+ * Determines whether a scenario event is eligible to be scheduled/delivered given the active scenario branch.
+ * - Events with no branch (or branch: 'all' / 'default' / 'baseline') are universal.
+ * - Events with a branch specified are only eligible if activeBranch matches that branch.
+ */
+export function isEventEligibleForBranch(event, activeBranch = null) {
+  if (!event) return false;
+  const evBranch = event.branch || event.branchId || event.requiredBranch || null;
+  if (!evBranch || evBranch === 'all' || evBranch === 'default' || evBranch === 'baseline') {
+    return true;
+  }
+  if (!activeBranch) {
+    // Before any decision is submitted, branch-specific future events remain inactive
+    return false;
+  }
+  if (Array.isArray(event.branches)) {
+    return event.branches.includes(activeBranch);
+  }
+  return evBranch === activeBranch;
+}
+
+/**
+ * Evaluates tactical command decision performance using 6 transparent, deterministic pillars:
+ * 1. Timeliness (Response Time vs Deadline)
+ * 2. Information Handling (Exploitation of available intel, citations, conflicting report verification)
+ * 3. Team Coordination (Cross-role discussion, shared awareness, consensus)
+ * 4. Confidence Calibration (Alignment between reported confidence and factual evidence)
+ * 5. Decision Quality (Consequence outcome, tactical justification depth)
+ * 6. Overall Training Score (Weighted composite 0-100)
+ */
+export function calculatePerformanceScore(decision, context = {}) {
+  if (!decision) {
+    return {
+      decisionQuality: 50,
+      informationHandling: 50,
+      coordination: 50,
+      timeliness: 50,
+      confidenceCalibration: 50,
+      overallScore: 50,
+      performanceBand: 'Moderate',
+      explainability: {
+        decisionQualityReason: 'Baseline decision assessment.',
+        informationHandlingReason: 'Baseline information utilization.',
+        coordinationReason: 'Baseline coordination.',
+        timelinessReason: 'Baseline response window.',
+        confidenceCalibrationReason: 'Baseline calibration.',
+        overallReason: 'Default baseline evaluation.'
+      }
+    };
+  }
+
+  const {
+    decisionPoint,
+    deliveredEvents = [],
+    allEventsUpToNow = [],
+    teamMessages = [],
+    sharedAwareness = 75,
+    evidenceSnapshot
+  } = context;
+
+  // --- 1. TIMELINESS (Decision Response Time) ---
+  const schedSec = decisionPoint?.scheduledTimeSec !== undefined
+    ? Number(decisionPoint.scheduledTimeSec)
+    : (parseTimeToSeconds(decisionPoint?.time) || 60);
+
+  const subSec = decision.elapsedSeconds !== undefined
+    ? Number(decision.elapsedSeconds)
+    : (decision.elapsedMinutes !== undefined ? Number(decision.elapsedMinutes) * 60 : schedSec + 25);
+
+  const responseTimeSec = Math.max(0, subSec - schedSec);
+  const deadlineSec = decisionPoint?.deadlineSeconds !== undefined
+    ? Number(decisionPoint.deadlineSeconds)
+    : schedSec + 60;
+  const allowedWindowSec = Math.max(15, deadlineSec - schedSec);
+  const timeRatio = responseTimeSec / allowedWindowSec;
+
+  let timelinessScore = 90;
+  let timelinessReason = '';
+
+  if (responseTimeSec === 0) {
+    timelinessScore = 75;
+    timelinessReason = 'Decision submitted instantaneously at trigger point without deliberation.';
+  } else if (timeRatio < 0.15) {
+    timelinessScore = 85;
+    timelinessReason = `Extremely rapid response (${responseTimeSec}s of ${allowedWindowSec}s window); swift but risked skimming incomplete intel.`;
+  } else if (timeRatio <= 0.75) {
+    timelinessScore = Math.min(100, Math.round(92 + (1 - timeRatio) * 8));
+    timelinessReason = `Optimal deliberative response window (${responseTimeSec}s / ${allowedWindowSec}s, ${Math.round(timeRatio * 100)}% of limit).`;
+  } else if (timeRatio <= 1.0) {
+    timelinessScore = Math.max(70, Math.round(85 - (timeRatio - 0.75) * 60));
+    timelinessReason = `Late-stage response (${responseTimeSec}s / ${allowedWindowSec}s); decision made near deadline pressure.`;
+  } else {
+    const overdue = responseTimeSec - allowedWindowSec;
+    timelinessScore = Math.max(20, Math.round(65 - overdue * 2));
+    timelinessReason = `Deadline exceeded by ${overdue}s; tactical command delayed beyond operational tolerance.`;
+  }
+
+  // --- 2. INFORMATION HANDLING & CONFLICTING VERIFICATION ---
+  const totalScheduled = allEventsUpToNow.length > 0 ? allEventsUpToNow.length : 4;
+  const deliveredCount = deliveredEvents.length > 0 ? deliveredEvents.length : 3;
+  const rawInfoPct = evidenceSnapshot?.metrics?.informationAvailabilityPct !== undefined
+    ? Number(evidenceSnapshot.metrics.informationAvailabilityPct)
+    : Math.min(100, Math.round((deliveredCount / Math.max(1, totalScheduled)) * 100));
+
+  let infoHandlingScore = Math.round(rawInfoPct * 0.55); // base up to 55
+  const sourcesCited = Array.isArray(decision.informationSources) ? decision.informationSources.length : 0;
+  if (sourcesCited >= 2) infoHandlingScore += 20;
+  else if (sourcesCited === 1) infoHandlingScore += 12;
+
+  const rationaleText = (decision.rationale || '').toLowerCase();
+  const mentionsIntel = /patrol|scout|radar|jamming|convoy|sector|mile|battery|channel|defilade|choke/i.test(rationaleText);
+  if (mentionsIntel) infoHandlingScore += 10;
+
+  // Check verification of conflicting/incomplete dispatches
+  const hasConflicting = deliveredEvents.some(e => e.isConflicting || e.deliveryBehavior === 'conflicting') ||
+                         allEventsUpToNow.some(e => e.deliveryBehavior === 'conflicting');
+  const hasIncomplete = deliveredEvents.some(e => e.isTruncated || e.deliveryBehavior === 'incomplete') ||
+                        allEventsUpToNow.some(e => e.deliveryBehavior === 'incomplete');
+
+  const selectedOptionLabel = typeof decision.selectedOption === 'object' 
+    ? (decision.selectedOption.label || decision.selectedOption.text || '') 
+    : String(decision.selectedOption || '');
+
+  const verifiedConflicting = /verif|confirm|check|scout|recon|unconfirmed|defilade|wait|hold|caution/i.test(rationaleText) ||
+                             /verify|recon|scout/i.test(selectedOptionLabel);
+
+  let infoHandlingReason = `Exploited ${rawInfoPct}% available intelligence (${deliveredCount}/${totalScheduled} dispatches).`;
+  if (hasConflicting || hasIncomplete) {
+    if (verifiedConflicting) {
+      infoHandlingScore += 20;
+      infoHandlingReason += ' Accurately identified and verified conflicting/partial sensor data before committing forces.';
+    } else {
+      infoHandlingScore = Math.max(15, infoHandlingScore - 15);
+      infoHandlingReason += ' Overlooked conflicting or degraded dispatches without requesting ground confirmation.';
+    }
+  } else {
+    infoHandlingScore += 15;
+  }
+  infoHandlingScore = Math.max(15, Math.min(100, infoHandlingScore));
+
+  // --- 3. TEAM COORDINATION & SHARED AWARENESS ---
+  const relevantMsgs = teamMessages.filter(m => {
+    if (!m) return false;
+    const t = m.timestampSec !== undefined ? Number(m.timestampSec) : 0;
+    return t <= subSec;
+  });
+  const chatCount = relevantMsgs.length;
+  const distinctRoles = new Set(relevantMsgs.map(m => m.senderRole || m.role).filter(Boolean)).size;
+
+  let chatCoordScore = 50;
+  let coordReason = '';
+  if (chatCount >= 4 && distinctRoles >= 3) {
+    chatCoordScore = 95;
+    coordReason = `High cross-domain collaboration: ${chatCount} communications exchanged across ${distinctRoles} roles.`;
+  } else if (chatCount >= 2 && distinctRoles >= 2) {
+    chatCoordScore = 85;
+    coordReason = `Effective team communication: ${chatCount} dispatches shared across ${distinctRoles} roles prior to action.`;
+  } else if (chatCount >= 1) {
+    chatCoordScore = 70;
+    coordReason = `Limited team coordination: only ${chatCount} message exchanged prior to order submission.`;
+  } else {
+    chatCoordScore = 40;
+    coordReason = 'Zero squad communications logged prior to decision; unilateral command action with isolated awareness.';
+  }
+
+  const awarenessVal = Math.min(100, Math.max(20, Number(sharedAwareness) || 70));
+  const coordinationScore = Math.max(20, Math.min(100, Math.round(0.55 * chatCoordScore + 0.45 * awarenessVal)));
+  coordReason += ` Shared Awareness rated at ${awarenessVal}%.`;
+
+  // --- 4. CONFIDENCE CALIBRATION ---
+  let confVal = 70;
+  if (typeof decision.confidence === 'number') {
+    confVal = decision.confidence <= 1 ? Math.round(decision.confidence * 100) : decision.confidence;
+  } else if (typeof decision.confidence === 'string') {
+    const parsed = parseInt(decision.confidence.replace(/[^0-9]/g, ''), 10);
+    if (!isNaN(parsed)) confVal = parsed;
+    else if (/high/i.test(decision.confidence)) confVal = 85;
+    else if (/medium/i.test(decision.confidence)) confVal = 60;
+    else if (/low/i.test(decision.confidence)) confVal = 35;
+  }
+
+  const consequenceObj = decision.consequence || {};
+  const outcomeText = String(consequenceObj.outcome || consequenceObj.description || '').toLowerCase();
+  const outcomePositive = /bypass|preserv|neutraliz|clear|safe|recon|success|defilade|victory/i.test(outcomeText) &&
+                          !/ambush sprung|heavy fire|pinned down|casualt/i.test(outcomeText);
+
+  let calibrationScore = 75;
+  let calibrationReason = '';
+
+  const confGap = confVal - rawInfoPct;
+  if (confVal >= 75 && rawInfoPct < 50) {
+    calibrationScore = Math.max(25, Math.round(85 - confGap * 1.1));
+    calibrationReason = `Overconfidence penalty: claimed ${confVal}% confidence despite severe fog of war (${rawInfoPct}% info availability).`;
+  } else if (confVal >= 75 && rawInfoPct >= 65) {
+    calibrationScore = Math.min(100, Math.round(90 + (outcomePositive ? 10 : 0)));
+    calibrationReason = `Well-calibrated confidence (${confVal}%) grounded in strong intelligence availability (${rawInfoPct}%).`;
+  } else if (confVal <= 65 && confVal >= 35 && rawInfoPct <= 60) {
+    calibrationScore = Math.min(100, Math.round(92 + (outcomePositive ? 8 : 0)));
+    calibrationReason = `Prudent caution: reported confidence (${confVal}%) appropriately acknowledged incomplete telemetry (${rawInfoPct}%).`;
+  } else if (confVal < 35 && rawInfoPct >= 80) {
+    calibrationScore = Math.max(45, Math.round(75 - (rawInfoPct - confVal) * 0.5));
+    calibrationReason = `Underconfidence: reported ${confVal}% confidence despite comprehensive intelligence verification (${rawInfoPct}%).`;
+  } else {
+    calibrationScore = Math.max(30, Math.min(100, Math.round(95 - Math.abs(confGap) * 0.6)));
+    calibrationReason = `Confidence level (${confVal}%) moderately aligned with telemetry fidelity (${rawInfoPct}%).`;
+  }
+
+  // --- 5. DECISION QUALITY ---
+  let qualityScore = 35;
+  let qualityReason = '';
+
+  if (outcomePositive) {
+    qualityScore += 40;
+    qualityReason = 'Selected tactical branch achieved favorable force preservation and threat neutralization.';
+  } else if (/ambush|heavy fire|pinned|casualt|jammed/i.test(outcomeText)) {
+    qualityScore += 10;
+    qualityReason = 'Selected route exposed vanguard to tactical ambush or electronic countermeasures.';
+  } else {
+    qualityScore += 25;
+    qualityReason = 'Tactical branch achieved baseline mission continuation.';
+  }
+
+  const rationaleLen = (decision.rationale || '').trim().length;
+  if (rationaleLen >= 40) {
+    qualityScore += 15;
+    qualityReason += ' Rationale articulated clear operational reasoning.';
+  } else if (rationaleLen >= 15) {
+    qualityScore += 10;
+  } else {
+    qualityScore += 2;
+    qualityReason += ' Brief or minimal tactical rationale provided.';
+  }
+
+  if (verifiedConflicting) {
+    qualityScore += 10;
+  }
+
+  qualityScore = Math.max(20, Math.min(100, qualityScore));
+
+  // --- 6. OVERALL TRAINING SCORE ---
+  const overallScore = Math.max(
+    10,
+    Math.min(
+      100,
+      Math.round(
+        0.25 * qualityScore +
+        0.20 * infoHandlingScore +
+        0.20 * coordinationScore +
+        0.15 * timelinessScore +
+        0.20 * calibrationScore
+      )
+    )
+  );
+
+  let performanceBand = 'Moderate';
+  if (overallScore >= 75) performanceBand = 'Strong';
+  else if (overallScore < 50) performanceBand = 'Weak';
+
+  const overallReason = `Overall Score ${overallScore}% (${performanceBand}) based on Quality (${qualityScore}%), Info Handling (${infoHandlingScore}%), Coordination (${coordinationScore}%), Timeliness (${timelinessScore}%), and Calibration (${calibrationScore}%).`;
+
+  return {
+    decisionQuality: qualityScore,
+    informationHandling: infoHandlingScore,
+    coordination: coordinationScore,
+    timeliness: timelinessScore,
+    confidenceCalibration: calibrationScore,
+    overallScore,
+    performanceBand,
+    explainability: {
+      decisionQualityReason: qualityReason,
+      informationHandlingReason: infoHandlingReason,
+      coordinationReason: coordReason,
+      timelinessReason: timelinessReason,
+      confidenceCalibrationReason: calibrationReason,
+      overallReason
+    }
+  };
+}
+
+/**
+ * Evaluates adaptive scenario difficulty based on trainee performance score.
+ * Deterministic rules:
+ * - Strong performance (overallScore >= 75) -> Step up difficulty (+1 level)
+ * - Moderate performance (50 <= overallScore < 75) -> Maintain current difficulty
+ * - Weak performance (overallScore < 50) -> Step down difficulty (-1 level)
+ * Supports instructor manual overrides and disabled mode.
+ */
+export function evaluateAdaptiveDifficulty(currentDifficulty, performanceScore, options = {}) {
+  const normCurrent = normalizeDifficulty(currentDifficulty);
+  const currentIndex = DIFFICULTY_ORDER.indexOf(normCurrent);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 1; // default Intermediate (1)
+
+  const {
+    enabled = true,
+    isManualOverride = false,
+    overrideTarget = null,
+    overrideReason = null
+  } = options;
+
+  // 1. Manual Instructor Override
+  if (isManualOverride && overrideTarget) {
+    const targetNorm = normalizeDifficulty(overrideTarget);
+    return {
+      previousDifficulty: normCurrent,
+      newDifficulty: targetNorm,
+      adaptationDirection: 'manual_override',
+      isManualOverride: true,
+      triggerReason: overrideReason || `Instructor manual override: adjusted scenario difficulty to ${targetNorm}.`,
+      performanceScore
+    };
+  }
+
+  // 2. Adaptive Mode Disabled
+  if (!enabled) {
+    return {
+      previousDifficulty: normCurrent,
+      newDifficulty: normCurrent,
+      adaptationDirection: 'none',
+      isManualOverride: false,
+      triggerReason: `Adaptive difficulty engine disabled by instructor; maintaining ${normCurrent}.`,
+      performanceScore
+    };
+  }
+
+  // 3. Rule-Based Automatic Adaptation
+  const score = performanceScore?.overallScore !== undefined ? performanceScore.overallScore : 65;
+  const band = performanceScore?.performanceBand || (score >= 75 ? 'Strong' : score < 50 ? 'Weak' : 'Moderate');
+
+  if (band === 'Strong' || score >= 75) {
+    const nextIdx = Math.min(DIFFICULTY_ORDER.length - 1, safeIndex + 1);
+    const newDifficulty = DIFFICULTY_ORDER[nextIdx];
+    if (nextIdx > safeIndex) {
+      return {
+        previousDifficulty: normCurrent,
+        newDifficulty,
+        adaptationDirection: 'increase',
+        isManualOverride: false,
+        triggerReason: `Strong squad performance (Overall: ${score}%, Quality: ${performanceScore?.decisionQuality || score}%, Calibration: ${performanceScore?.confidenceCalibration || score}%). Escalated difficulty to ${newDifficulty} to test resilience under higher latency and sensor friction.`,
+        performanceScore
+      };
+    }
+    return {
+      previousDifficulty: normCurrent,
+      newDifficulty: normCurrent,
+      adaptationDirection: 'maintain',
+      isManualOverride: false,
+      triggerReason: `Strong squad performance (Overall: ${score}%), already operating at maximum difficulty ceiling (${normCurrent}). Maintaining peak friction.`,
+      performanceScore
+    };
+  }
+
+  if (band === 'Weak' || score < 50) {
+    const nextIdx = Math.max(0, safeIndex - 1);
+    const newDifficulty = DIFFICULTY_ORDER[nextIdx];
+    if (nextIdx < safeIndex) {
+      return {
+        previousDifficulty: normCurrent,
+        newDifficulty,
+        adaptationDirection: 'decrease',
+        isManualOverride: false,
+        triggerReason: `Weak squad performance (Overall: ${score}%, Quality: ${performanceScore?.decisionQuality || score}%, Info Handling: ${performanceScore?.informationHandling || score}%). De-escalated difficulty to ${newDifficulty} to facilitate command recovery and clearer channel telemetry.`,
+        performanceScore
+      };
+    }
+    return {
+      previousDifficulty: normCurrent,
+      newDifficulty: normCurrent,
+      adaptationDirection: 'maintain',
+      isManualOverride: false,
+      triggerReason: `Weak squad performance (Overall: ${score}%), already operating at baseline difficulty floor (${normCurrent}). Maintaining baseline support.`,
+      performanceScore
+    };
+  }
+
+  // Moderate Performance (50 - 74)
+  return {
+    previousDifficulty: normCurrent,
+    newDifficulty: normCurrent,
+    adaptationDirection: 'maintain',
+    isManualOverride: false,
+    triggerReason: `Moderate squad performance (Overall: ${score}%). Stabilizing difficulty at ${normCurrent} to evaluate operational consistency.`,
+    performanceScore
+  };
+}
+
+/**
  * Class representing a deterministic event engine instance for an exercise run.
  */
 export class EventEngine {
@@ -347,7 +857,7 @@ export class EventEngine {
     ];
 
     // 1. Authoritative GeneratedEvents (Ground Truth)
-    this.generatedEvents = (scenario?.events || []).map((ev, index) => {
+    this.allGeneratedEvents = (scenario?.events || []).map((ev, index) => {
       const scheduledSec = parseTimeToSeconds(ev.time || ev.scheduledTime || 0);
       const delaySec = ev.delaySeconds !== undefined ? Number(ev.delaySeconds) : (ev.deliveryBehavior === 'delayed' ? (ev.delayAmount || 20) : 0);
       const actualDeliverySec = ev.deliveryBehavior === 'delayed' ? scheduledSec + delaySec : scheduledSec;
@@ -365,12 +875,30 @@ export class EventEngine {
         delaySeconds: delaySec,
         actualDeliveryTimeSec: actualDeliverySec,
         recipientRole: ev.recipientRole || ev.intendedRecipient || 'all',
+        targetRole: ev.targetRole || ev.recipientRole || ev.intendedRecipient || 'all',
+        deadlineSeconds: ev.deadlineSeconds,
+        decisionOptions: ev.decisionOptions || [],
+        requiresDecision: ev.requiresDecision,
+        isDecisionPoint: ev.isDecisionPoint,
+        branch: ev.branch || ev.branchId || ev.requiredBranch || null,
+        branches: Array.isArray(ev.branches) ? ev.branches : (ev.branch ? [ev.branch] : []),
         instructorNotes: ev.instructorNotes || '',
         roleVariations: ev.roleVariations || {},
         status: DELIVERY_STATUS.PENDING,
         deliveredToParticipant: false
       };
     }).sort((a, b) => a.scheduledTimeSec - b.scheduledTimeSec);
+
+    // Branching and Adaptive Difficulty state
+    this.activeBranch = options.activeBranch || null;
+    this.branchesHistory = options.branchesHistory ? [...options.branchesHistory] : [];
+    this.decisionConsequencesLog = options.decisionConsequencesLog ? [...options.decisionConsequencesLog] : [];
+    this.scenarioDifficulty = normalizeDifficulty(options.initialDifficulty || scenario?.difficulty || 'Intermediate');
+    this.adaptiveDifficultyEnabled = options.adaptiveDifficultyEnabled !== undefined ? Boolean(options.adaptiveDifficultyEnabled) : true;
+    this.difficultyAdaptationsLog = options.difficultyAdaptationsLog ? [...options.difficultyAdaptationsLog] : [];
+
+    // Active subset of generated events eligible for current branch
+    this.generatedEvents = this.allGeneratedEvents.filter(ev => isEventEligibleForBranch(ev, this.activeBranch));
 
     this.activeDisruptions = options.initialDisruptions || [];
     this.disruptionsLog = options.initialDisruptionsLog || [];
@@ -752,12 +1280,285 @@ export class EventEngine {
       deliveredCount: totalDelivered,
       delayedCount: totalDelayed,
       droppedCount: totalDropped,
+      activeBranch: this.activeBranch,
+      branchesHistory: [...this.branchesHistory],
+      decisionConsequencesLog: [...this.decisionConsequencesLog],
+      scenarioDifficulty: this.scenarioDifficulty,
+      adaptiveDifficultyEnabled: this.adaptiveDifficultyEnabled,
+      difficultyAdaptationsLog: [...this.difficultyAdaptationsLog],
       activeDisruptions: [...this.activeDisruptions],
       disruptionsLog: [...this.disruptionsLog]
     };
   }
-<<<<<<< Updated upstream
-=======
+
+  /**
+   * Applies a submitted decision, activating its consequence, calculating performance scores,
+   * triggering deterministic adaptive difficulty scaling, and activating the resulting scenario branch.
+   */
+  applyDecision(decisionData) {
+    if (!decisionData) return null;
+
+    // 1. Locate matching decision point
+    const dp = this.allGeneratedEvents.find(ev => 
+      isDecisionEvent(ev) && (ev.id === decisionData.decisionPointId || ev.id === decisionData.id)
+    ) || this.allGeneratedEvents.find(isDecisionEvent);
+
+    // 2. Resolve option, nextBranch, and consequence
+    const selectedInput = decisionData.selectedOption || decisionData.selectedOptionId || decisionData.title;
+    const resolved = resolveOptionBranchAndConsequence(dp, selectedInput);
+
+    const nextBranch = decisionData.nextBranch || resolved.nextBranch;
+    const consequence = decisionData.consequence || resolved.consequence;
+    const selectedOption = resolved.selectedOption || decisionData.selectedOption;
+    const selectedOptionId = resolved.selectedOptionId || decisionData.selectedOptionId;
+
+    // 3. Assemble full context for performance scoring
+    const deliveredEvents = decisionData.deliveredEvents || this.getDeliveredEvents(decisionData.submittedRole || 'all');
+    const allEventsUpToNow = decisionData.allEventsUpToNow || this.allGeneratedEvents.filter(ev => ev.scheduledTimeSec <= this.elapsedSeconds);
+    const scoreContext = {
+      decisionPoint: dp,
+      decisionScheduledTime: dp?.scheduledTimeSec || 0,
+      deadlineSeconds: dp?.deadlineSeconds || (dp?.scheduledTimeSec ? dp.scheduledTimeSec + 60 : 60),
+      deliveredEvents,
+      allEventsUpToNow,
+      teamMessages: decisionData.teamMessages || [],
+      sharedAwareness: decisionData.sharedAwareness || {}
+    };
+
+    // 4. Calculate transparent deterministic performance score
+    const performanceScore = decisionData.performanceScore || calculatePerformanceScore(decisionData, scoreContext);
+
+    // 5. Evaluate deterministic adaptive difficulty or honor authored consequence script
+    const hasExplicitDifficultyChange = Boolean(
+      consequence?.difficultyChange && 
+      !['none', 'standard', 'maintain', 'same'].includes(String(consequence.difficultyChange).toLowerCase().trim())
+    );
+
+    let adaptationResult;
+    if (hasExplicitDifficultyChange) {
+      const dc = String(consequence.difficultyChange).toLowerCase().trim();
+      let newDiff = this.scenarioDifficulty;
+      let dir = 'maintain';
+
+      if (dc === 'decrease' || dc === 'lower' || dc === 'easy') {
+        newDiff = (this.scenarioDifficulty === 'Advanced' || this.scenarioDifficulty === 'High Friction') ? 'Intermediate' : 'Fundamental';
+        dir = 'decrease';
+      } else if (dc === 'increase' || dc === 'higher' || dc === 'hard') {
+        newDiff = (this.scenarioDifficulty === 'Fundamental' || this.scenarioDifficulty === 'Easy') ? 'Intermediate' : 'Advanced';
+        dir = 'increase';
+      } else {
+        newDiff = normalizeDifficulty(consequence.difficultyChange);
+        const oldIdx = DIFFICULTY_ORDER.indexOf(normalizeDifficulty(this.scenarioDifficulty));
+        const newIdx = DIFFICULTY_ORDER.indexOf(newDiff);
+        dir = newIdx > oldIdx ? 'increase' : newIdx < oldIdx ? 'decrease' : 'maintain';
+      }
+
+      adaptationResult = {
+        previousDifficulty: this.scenarioDifficulty,
+        newDifficulty: newDiff,
+        adaptationDirection: dir,
+        isManualOverride: false,
+        triggerReason: `Branch consequence directive: ${consequence.difficultyChange} (${consequence.description || consequence.outcome || 'tactical branch adaptation'}).`,
+        performanceScore
+      };
+    } else {
+      adaptationResult = evaluateAdaptiveDifficulty(
+        this.scenarioDifficulty,
+        performanceScore,
+        { enabled: this.adaptiveDifficultyEnabled }
+      );
+    }
+
+    const adaptationEntry = {
+      id: `diff-adapt-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      decisionId: decisionData.id || `dec-${Date.now()}`,
+      decisionPointId: dp?.id || decisionData.decisionPointId || null,
+      decisionTitle: decisionData.title || (typeof selectedOption === 'object' ? selectedOption.label : selectedOption),
+      timestamp: decisionData.timestamp || new Date().toISOString(),
+      elapsedSeconds: this.elapsedSeconds,
+      elapsedFormatted: formatSecondsToMMSS(this.elapsedSeconds),
+      previousDifficulty: adaptationResult.previousDifficulty,
+      newDifficulty: adaptationResult.newDifficulty,
+      adaptationDirection: adaptationResult.adaptationDirection,
+      isManualOverride: adaptationResult.isManualOverride,
+      triggerReason: adaptationResult.triggerReason,
+      performanceScore
+    };
+
+    this.difficultyAdaptationsLog.push(adaptationEntry);
+    this.scenarioDifficulty = adaptationResult.newDifficulty;
+
+    // 6. Apply difficulty-driven operational friction or relief
+    if (adaptationResult.adaptationDirection === 'increase') {
+      // Strong performance -> slightly increase degradation/event complexity
+      const willRestore = consequence?.communicationConditions?.type === 'restore' || consequence?.communicationConditions?.type === 'restore communication';
+      if (!willRestore && !this.activeDisruptions.some(d => d.disruptionType === 'delay' || d.disruptionType === 'latency')) {
+        this.injectDisruption({
+          target: 'all',
+          disruptionType: 'delay',
+          severity: 'slight',
+          duration: 45
+        });
+      }
+    } else if (adaptationResult.adaptationDirection === 'decrease') {
+      // Weak performance or de-escalation -> reduce complexity or provide clearer channel telemetry
+      this.clearDisruption('all');
+    }
+
+    // 7. Update active branch and record history
+    this.activeBranch = nextBranch;
+    this.branchesHistory.push(nextBranch);
+
+    // 8. Record decision consequence log with 5-step AAR causality trail:
+    // Information -> Decision -> Performance Metrics -> Consequence -> Difficulty Adaptation
+    const consequenceEntry = {
+      id: `conseq-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      decisionId: decisionData.id,
+      decisionPointId: dp?.id || decisionData.decisionPointId || null,
+      decisionTitle: decisionData.title || (typeof selectedOption === 'object' ? selectedOption.label : selectedOption),
+      selectedOption,
+      selectedOptionId,
+      activeBranch: nextBranch,
+      nextBranch,
+      consequence,
+      informationAvailable: (deliveredEvents || []).map(e => ({
+        id: e.id,
+        title: e.title,
+        domain: e.domain,
+        confidence: e.confidence,
+        status: e.status
+      })),
+      performanceScore,
+      difficultyAdaptation: adaptationEntry,
+      timestamp: decisionData.timestamp || new Date().toISOString(),
+      elapsedSeconds: this.elapsedSeconds,
+      elapsedFormatted: formatSecondsToMMSS(this.elapsedSeconds),
+      submittedBy: decisionData.submittedBy || 'Leader-01',
+      submittedRole: decisionData.submittedRole || 'team_leader'
+    };
+    this.decisionConsequencesLog.push(consequenceEntry);
+
+    // 9. Apply explicit communication conditions if authored
+    if (consequence?.communicationConditions) {
+      const cc = consequence.communicationConditions;
+      if (cc.type === 'restore' || cc.type === 'restore communication') {
+        this.clearDisruption(cc.target || 'all');
+      } else if (cc.type) {
+        this.injectDisruption({
+          target: cc.target || 'all',
+          disruptionType: cc.type,
+          severity: cc.severity || 'high',
+          duration: cc.duration || 60
+        });
+      }
+    }
+
+    // 10. Re-filter active generated events for the newly selected branch
+    this.updateBranchEvents();
+
+    return consequenceEntry;
+  }
+
+  /**
+   * Re-evaluates which events are active given the current branch and rebuilds participant feeds.
+   */
+  updateBranchEvents() {
+    this.generatedEvents = this.allGeneratedEvents.filter(ev => isEventEligibleForBranch(ev, this.activeBranch));
+    this.events = this.generatedEvents;
+    this.rebuildDeliveredEvents();
+    this.evaluateEvents();
+    this.notify();
+  }
+
+  getActiveBranch() {
+    return this.activeBranch;
+  }
+
+  getBranchesHistory() {
+    return [...this.branchesHistory];
+  }
+
+  getDecisionConsequencesLog() {
+    return [...this.decisionConsequencesLog];
+  }
+
+  getScenarioDifficulty() {
+    return this.scenarioDifficulty;
+  }
+
+  isAdaptiveDifficultyEnabled() {
+    return this.adaptiveDifficultyEnabled;
+  }
+
+  setAdaptiveDifficultyEnabled(enabled) {
+    this.adaptiveDifficultyEnabled = Boolean(enabled);
+    this.notify();
+    return this.adaptiveDifficultyEnabled;
+  }
+
+  getDifficultyAdaptationsLog() {
+    return [...this.difficultyAdaptationsLog];
+  }
+
+  /**
+   * Allows the Instructor or Evaluator to manually override the scenario difficulty level.
+   * Trainee overrides are strictly forbidden.
+   */
+  overrideScenarioDifficulty(newDifficulty, reason = '', userRole = 'instructor') {
+    const normRole = normalizeRole(userRole);
+    if (normRole !== TRAINEE_ROLES.INSTRUCTOR && normRole !== 'admin' && normRole !== 'lead_evaluator') {
+      throw new Error(`Unauthorized: Role '${userRole}' cannot override scenario difficulty. Instructor privileges required.`);
+    }
+
+    const adaptationResult = evaluateAdaptiveDifficulty(this.scenarioDifficulty, null, {
+      isManualOverride: true,
+      overrideTarget: newDifficulty,
+      overrideReason: reason
+    });
+
+    const adaptationEntry = {
+      id: `diff-override-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      decisionId: null,
+      decisionPointId: null,
+      decisionTitle: 'Instructor Manual Override',
+      timestamp: new Date().toISOString(),
+      elapsedSeconds: this.elapsedSeconds,
+      elapsedFormatted: formatSecondsToMMSS(this.elapsedSeconds),
+      previousDifficulty: adaptationResult.previousDifficulty,
+      newDifficulty: adaptationResult.newDifficulty,
+      adaptationDirection: adaptationResult.adaptationDirection,
+      isManualOverride: true,
+      triggerReason: adaptationResult.triggerReason,
+      performanceScore: null
+    };
+
+    this.scenarioDifficulty = adaptationResult.newDifficulty;
+    this.difficultyAdaptationsLog.push(adaptationEntry);
+    this.notify();
+    return adaptationEntry;
+  }
+
+  /**
+   * Returns delivered events for a given participant role at or before elapsedSeconds.
+   */
+  getDeliveredEvents(role = 'all', elapsedSeconds = null) {
+    const sec = elapsedSeconds !== null && elapsedSeconds !== undefined ? Number(elapsedSeconds) : this.elapsedSeconds;
+    const norm = normalizeRole(role);
+    if (norm === TRAINEE_ROLES.INSTRUCTOR || role === 'all') {
+      return this.generatedEvents.filter(ev => {
+        if (ev.deliveryBehavior === DELIVERY_BEHAVIORS.DROPPED) return false;
+        const deliverAt = ev.deliveryBehavior === DELIVERY_BEHAVIORS.DELAYED ? ev.actualDeliveryTimeSec : ev.scheduledTimeSec;
+        return sec >= deliverAt;
+      });
+    }
+
+    const list = this.deliveredEventsByRole.get(norm) || this.deliveredEventsByRole.get(role) || [];
+    return list.filter(ev => {
+      if (ev.deliveryBehavior === DELIVERY_BEHAVIORS.DROPPED) return false;
+      const deliverAt = ev.deliveryBehavior === DELIVERY_BEHAVIORS.DELAYED ? ev.actualDeliveryTimeSec : ev.scheduledTimeSec;
+      return sec >= deliverAt;
+    });
+  }
 
   /**
    * Returns active decision events that have triggered at or before current elapsed time.
@@ -1080,5 +1881,4 @@ export function createEvidenceSnapshot({
       sharedAwarenessPct
     }
   };
->>>>>>> Stashed changes
 }

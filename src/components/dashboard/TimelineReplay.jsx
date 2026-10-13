@@ -34,7 +34,8 @@ export const TimelineReplay = ({ aar }) => {
       deliveryBehavior: ev.deliveryBehavior,
       recipientRole: ev.recipientRole || 'all',
       timeSec: ev.actualDeliveryTimeSec || ev.scheduledTimeSec || 0,
-      status: ev.status
+      status: ev.status,
+      branch: ev.branch || null
     })),
     ...decisions.map(d => ({
       id: d.id,
@@ -44,8 +45,15 @@ export const TimelineReplay = ({ aar }) => {
       type: 'decision',
       recipientRole: d.submittedRole || 'all',
       submittedBy: d.submittedBy || 'Operator',
-      timeSec: (d.elapsedMinutes || 0) * 60,
-      confidence: d.confidence
+      timeSec: d.elapsedSeconds !== undefined ? d.elapsedSeconds : ((d.elapsedMinutes || 0) * 60),
+      confidence: d.confidence,
+      selectedOption: d.selectedOption,
+      nextBranch: d.nextBranch,
+      consequence: d.consequence,
+      decisionPointId: d.decisionPointId,
+      informationSources: d.informationSources,
+      performanceScore: d.performanceScore,
+      difficultyAdaptation: d.difficultyAdaptation
     }))
   ].sort((a, b) => a.timeSec - b.timeSec);
 
@@ -193,6 +201,53 @@ export const TimelineReplay = ({ aar }) => {
         ))}
       </div>
 
+      {/* Active Step Decision / Branch Alert Banner */}
+      {currentItem.kind === 'decision' && (
+        <div style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', borderLeft: '4px solid #D97706', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              ⚡ Tactical Decision Executed at T+ {formatSecondsToMMSS(currentItem.timeSec)}
+            </span>
+            {currentItem.nextBranch && (
+              <span style={{ fontSize: '11px', background: '#B45309', color: '#FFF', padding: '2px 8px', borderRadius: '3px', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                Active Branch: {currentItem.nextBranch}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+            {currentItem.title}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '12px', marginTop: '4px', background: '#FFF', padding: '8px 12px', border: '1px solid #FDE68A' }}>
+            <div>
+              <strong>Selected Option:</strong> {typeof currentItem.selectedOption === 'object' ? currentItem.selectedOption.label : (currentItem.selectedOption || 'N/A')}
+            </div>
+            <div>
+              <strong>Submitted By:</strong> {currentItem.submittedBy} ({currentItem.recipientRole})
+            </div>
+            {currentItem.consequence && (
+              <div style={{ gridColumn: 'span 2', color: '#451A03' }}>
+                <strong>Operational Consequence:</strong> {typeof currentItem.consequence === 'object' ? currentItem.consequence.description : currentItem.consequence}
+              </div>
+            )}
+            {currentItem.consequence?.outcome && (
+              <div style={{ gridColumn: 'span 2', color: '#047857', fontWeight: 'bold' }}>
+                <strong>Scenario Outcome:</strong> {currentItem.consequence.outcome}
+              </div>
+            )}
+            {currentItem.performanceScore && (
+              <div style={{ gridColumn: 'span 2', background: '#F0FDF4', border: '1px solid #BBF7D0', padding: '6px 8px', borderRadius: '3px', fontSize: '11px', color: '#166534' }}>
+                <span style={{ fontWeight: 'bold' }}>Performance Score: {currentItem.performanceScore.overallScore}% ({currentItem.performanceScore.performanceBand})</span> • Quality: {currentItem.performanceScore.decisionQuality}% • Info: {currentItem.performanceScore.informationHandling}% • Coord: {currentItem.performanceScore.coordination}% • Time: {currentItem.performanceScore.timeliness}% • Calib: {currentItem.performanceScore.confidenceCalibration}%
+              </div>
+            )}
+            {currentItem.difficultyAdaptation && (
+              <div style={{ gridColumn: 'span 2', background: '#EFF6FF', border: '1px solid #BFDBFE', padding: '6px 8px', borderRadius: '3px', fontSize: '11px', color: '#1E40AF' }}>
+                <strong>Difficulty Adaptation:</strong> {currentItem.difficultyAdaptation.previousDifficulty} → <strong>{currentItem.difficultyAdaptation.newDifficulty}</strong> ({currentItem.difficultyAdaptation.triggerReason})
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Replay State Display */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
         {/* Left Column: Messages Delivered up to Current Step */}
@@ -209,9 +264,16 @@ export const TimelineReplay = ({ aar }) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
               {filteredDeliveredMessages.map(m => (
                 <div key={m.id} style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '10px', fontSize: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: 'var(--color-primary-navy)', alignItems: 'center' }}>
                     <span>[T+ {formatSecondsToMMSS(m.timeSec)}] {m.title}</span>
-                    <span style={{ fontSize: '9px', background: '#E2E8F0', padding: '1px 4px', textTransform: 'uppercase' }}>{m.recipientRole}</span>
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      {m.branch && (
+                        <span style={{ fontSize: '9px', background: '#DBEAFE', color: '#1E40AF', padding: '1px 5px', fontWeight: 'bold', borderRadius: '2px', fontFamily: 'monospace' }}>
+                          Branch: {m.branch}
+                        </span>
+                      )}
+                      <span style={{ fontSize: '9px', background: '#E2E8F0', padding: '1px 4px', textTransform: 'uppercase' }}>{m.recipientRole}</span>
+                    </div>
                   </div>
                   <div style={{ color: '#334155', marginTop: '4px' }}>{m.content}</div>
                 </div>
@@ -239,6 +301,42 @@ export const TimelineReplay = ({ aar }) => {
                     <span style={{ fontSize: '10px', color: 'var(--color-terracotta)', fontWeight: 'bold' }}>{d.submittedBy}</span>
                   </div>
                   <div style={{ color: '#334155', marginTop: '4px' }}><strong>Rationale:</strong> {d.content}</div>
+
+                  {d.selectedOption && (
+                    <div style={{ marginTop: '8px', padding: '8px', background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '3px', fontSize: '11px' }}>
+                      <div style={{ fontWeight: 'bold', color: '#0369A1' }}>
+                        Selected Option: {typeof d.selectedOption === 'object' ? d.selectedOption.label : d.selectedOption}
+                      </div>
+                      {d.nextBranch && (
+                        <div style={{ marginTop: '3px', color: '#0C4A6E', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontWeight: '600' }}>Resulting Branch:</span>
+                          <span style={{ background: '#E0F2FE', padding: '1px 6px', borderRadius: '3px', fontFamily: 'monospace', fontWeight: 'bold' }}>
+                            {d.nextBranch}
+                          </span>
+                        </div>
+                      )}
+                      {d.consequence && (
+                        <div style={{ marginTop: '4px', color: '#334155' }}>
+                          <strong>Consequence:</strong> {typeof d.consequence === 'object' ? d.consequence.description : d.consequence}
+                        </div>
+                      )}
+                      {d.consequence?.outcome && (
+                        <div style={{ marginTop: '3px', color: '#047857', fontWeight: '600' }}>
+                          <strong>Outcome:</strong> {d.consequence.outcome}
+                        </div>
+                      )}
+                      {d.performanceScore && (
+                        <div style={{ marginTop: '4px', fontSize: '10px', color: '#166534', background: '#F0FDF4', padding: '2px 6px', borderRadius: '2px' }}>
+                          Score: <strong>{d.performanceScore.overallScore}% ({d.performanceScore.performanceBand})</strong>
+                        </div>
+                      )}
+                      {d.difficultyAdaptation && (
+                        <div style={{ marginTop: '2px', fontSize: '10px', color: '#1E40AF', background: '#EFF6FF', padding: '2px 6px', borderRadius: '2px' }}>
+                          Adaptation: {d.difficultyAdaptation.previousDifficulty} → {d.difficultyAdaptation.newDifficulty}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

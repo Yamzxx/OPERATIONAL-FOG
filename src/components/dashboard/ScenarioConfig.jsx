@@ -91,9 +91,121 @@ export const ScenarioConfig = ({
     setEvents(updated);
   };
 
+  const definedBranches = Array.from(new Set(
+    events.flatMap(e => {
+      const branches = [];
+      if (e.branch) branches.push(e.branch);
+      if (e.decisionOptions) {
+        e.decisionOptions.forEach(opt => {
+          if (opt && opt.nextBranch) branches.push(opt.nextBranch);
+        });
+      }
+      return branches;
+    })
+  )).filter(Boolean);
+
   const handleUpdateEvent = (index, field, value) => {
     const updated = [...events];
-    updated[index] = { ...updated[index], [field]: value };
+    const target = { ...updated[index], [field]: value };
+    if (field === 'deliveryBehavior' && value === 'decision_point') {
+      target.type = 'DECISION_REQUIRED';
+      target.targetRoles = target.targetRoles || ['team_leader'];
+      if (!target.decisionOptions || target.decisionOptions.length === 0) {
+        target.decisionOptions = [
+          {
+            id: `opt-1-${Date.now()}`,
+            label: 'Option A: Reconnaissance & Verify Intel',
+            nextBranch: 'branch_recon',
+            consequence: {
+              description: 'Ground patrol reconnoiters flank; clarifies disposition.',
+              difficultyChange: 'decrease',
+              communicationConditions: 'Normal',
+              outcome: 'Intel confirmed; avoids immediate tactical ambush.'
+            }
+          },
+          {
+            id: `opt-2-${Date.now()}`,
+            label: 'Option B: Rapid Advance Along Main Route',
+            nextBranch: 'branch_advance',
+            consequence: {
+              description: 'Units advance aggressively into unconfirmed sector.',
+              difficultyChange: 'increase',
+              communicationConditions: 'Intermittent VHF dropout',
+              outcome: 'Units enter contested choke point under jamming.'
+            }
+          }
+        ];
+      }
+    } else if (field === 'deliveryBehavior' && value !== 'decision_point' && target.type === 'DECISION_REQUIRED') {
+      target.type = 'warning';
+    }
+    updated[index] = target;
+    setEvents(updated);
+  };
+
+  const handleAddDecisionOption = (eventIndex) => {
+    const updated = [...events];
+    const ev = { ...updated[eventIndex] };
+    const currentOpts = ev.decisionOptions || [];
+    const nextNum = currentOpts.length + 1;
+    ev.decisionOptions = [
+      ...currentOpts,
+      {
+        id: `opt-${nextNum}-${Date.now()}`,
+        label: `Option ${String.fromCharCode(64 + nextNum)}: Action Plan`,
+        nextBranch: `branch_${String.fromCharCode(96 + nextNum)}`,
+        consequence: {
+          description: 'Tactical consequence of this action.',
+          difficultyChange: 'none',
+          communicationConditions: 'Normal',
+          outcome: 'Expected operational outcome.'
+        }
+      }
+    ];
+    updated[eventIndex] = ev;
+    setEvents(updated);
+  };
+
+  const handleUpdateDecisionOption = (eventIndex, optIndex, optField, optValue) => {
+    const updated = [...events];
+    const ev = { ...updated[eventIndex] };
+    const opts = [...(ev.decisionOptions || [])];
+    const targetOpt = { ...opts[optIndex] };
+
+    if (optField === 'consequence_desc') {
+      targetOpt.consequence = {
+        ...(targetOpt.consequence || {}),
+        description: optValue
+      };
+    } else if (optField === 'consequence_difficulty') {
+      targetOpt.consequence = {
+        ...(targetOpt.consequence || {}),
+        difficultyChange: optValue
+      };
+    } else if (optField === 'consequence_outcome') {
+      targetOpt.consequence = {
+        ...(targetOpt.consequence || {}),
+        outcome: optValue
+      };
+    } else if (optField === 'consequence_comms') {
+      targetOpt.consequence = {
+        ...(targetOpt.consequence || {}),
+        communicationConditions: optValue
+      };
+    } else {
+      targetOpt[optField] = optValue;
+    }
+    opts[optIndex] = targetOpt;
+    ev.decisionOptions = opts;
+    updated[eventIndex] = ev;
+    setEvents(updated);
+  };
+
+  const handleRemoveDecisionOption = (eventIndex, optIndex) => {
+    const updated = [...events];
+    const ev = { ...updated[eventIndex] };
+    ev.decisionOptions = (ev.decisionOptions || []).filter((_, i) => i !== optIndex);
+    updated[eventIndex] = ev;
     setEvents(updated);
   };
 
@@ -104,6 +216,11 @@ export const ScenarioConfig = ({
     for (let i = 0; i < events.length; i++) {
       if (!events[i].title.trim()) return `Event #${i + 1} must have a title.`;
       if (!events[i].content.trim()) return `Event #${i + 1} must have message content.`;
+      if (events[i].type === 'DECISION_REQUIRED' || events[i].deliveryBehavior === 'decision_point') {
+        if (!events[i].decisionOptions || events[i].decisionOptions.length === 0) {
+          return `Decision Point #${i + 1} must configure at least one decision option.`;
+        }
+      }
     }
     return '';
   };
@@ -379,6 +496,7 @@ export const ScenarioConfig = ({
                     <option value="dropped">Dropped (Lost Message)</option>
                     <option value="conflicting">Conflicting Report</option>
                     <option value="incomplete">Incomplete (Cut Off)</option>
+                    <option value="decision_point">Tactical Decision Point (DECISION_REQUIRED)</option>
                   </select>
                 </div>
 
@@ -398,6 +516,35 @@ export const ScenarioConfig = ({
                 </div>
               </div>
 
+              {/* Branch Filter Selector */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', background: '#F1F5F9', padding: '6px 12px', border: '1px solid #E2E8F0', borderRadius: '2px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                  Branch Condition:
+                </span>
+                <select 
+                  className="gov-form-select"
+                  style={{ maxWidth: '240px', fontSize: '11px', padding: '3px 8px' }}
+                  value={ev.branch || ''}
+                  onChange={(e) => handleUpdateEvent(idx, 'branch', e.target.value)}
+                >
+                  <option value="">Universal (Delivered in All Branches)</option>
+                  {definedBranches.map(b => (
+                    <option key={b} value={b}>Branch: {b}</option>
+                  ))}
+                </select>
+                <input 
+                  type="text"
+                  placeholder="Or custom branch identifier..."
+                  className="gov-form-input"
+                  style={{ maxWidth: '220px', fontSize: '11px', padding: '3px 8px', fontFamily: 'monospace' }}
+                  value={ev.branch || ''}
+                  onChange={(e) => handleUpdateEvent(idx, 'branch', e.target.value)}
+                />
+                <span style={{ fontSize: '11px', color: ev.branch ? '#1D4ED8' : '#64748B', fontWeight: ev.branch ? 'bold' : 'normal' }}>
+                  {ev.branch ? `⚡ Active only if branch '${ev.branch}' is selected.` : 'Visible across all baseline & branched paths.'}
+                </span>
+              </div>
+
               {/* Extra options if Delayed */}
               {ev.deliveryBehavior === 'delayed' && (
                 <div style={{ backgroundColor: '#FEF3C7', border: '1px solid #FCD34D', padding: '8px 12px', marginBottom: '10px', fontSize: '12px' }}>
@@ -414,6 +561,131 @@ export const ScenarioConfig = ({
                   <span style={{ fontSize: '11px', color: '#92400E', marginLeft: '8px' }}>
                     Will arrive at {formatSecondsToMMSS((parseTimeToSeconds(ev.time) || 0) + (ev.delaySeconds || 300))}
                   </span>
+                </div>
+              )}
+
+              {/* Decision Point Options & Branching Engine */}
+              {(ev.deliveryBehavior === 'decision_point' || ev.type === 'DECISION_REQUIRED') && (
+                <div style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', padding: '14px', marginBottom: '12px', borderRadius: '2px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#1E40AF' }}>
+                        ⚡ Decision Options & Dynamic Branching Engine
+                      </span>
+                      <span style={{ fontSize: '10px', background: '#DBEAFE', color: '#1E40AF', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>
+                        {(ev.decisionOptions || []).length} Options Configured
+                      </span>
+                    </div>
+
+                    <button 
+                      type="button" 
+                      onClick={() => handleAddDecisionOption(idx)}
+                      style={{ background: '#1E40AF', color: '#FFF', border: 'none', padding: '4px 10px', borderRadius: '2px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                    >
+                      <Plus size={12} />
+                      <span>Add Option</span>
+                    </button>
+                  </div>
+
+                  <p style={{ fontSize: '11px', color: '#1E3A8A', margin: '0 0 12px 0' }}>
+                    When trainees select an option, the simulation dynamically activates its predefined branch, modifies subsequent event delivery, and adjusts operational difficulty.
+                  </p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {(ev.decisionOptions || []).map((opt, optIdx) => (
+                      <div key={opt.id || optIdx} style={{ backgroundColor: '#FFF', border: '1px solid #CBD5E1', padding: '10px', borderRadius: '2px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px dashed #E2E8F0', paddingBottom: '4px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#0F172A' }}>
+                            Decision Option #{optIdx + 1}
+                          </span>
+                          <button 
+                            type="button"
+                            onClick={() => handleRemoveDecisionOption(idx, optIdx)}
+                            disabled={(ev.decisionOptions || []).length <= 1}
+                            style={{ background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', fontSize: '11px', opacity: (ev.decisionOptions || []).length <= 1 ? 0.4 : 1 }}
+                            title="Remove Option"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                          <div>
+                            <label className="gov-form-label" style={{ fontSize: '10px' }}>Option Label (Trainee visible)</label>
+                            <input 
+                              type="text"
+                              className="gov-form-input"
+                              style={{ fontSize: '11px', padding: '4px 8px' }}
+                              placeholder="e.g. Verify Information with Ground Patrols"
+                              value={typeof opt === 'object' ? (opt.label || '') : opt}
+                              onChange={(e) => handleUpdateDecisionOption(idx, optIdx, 'label', e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className="gov-form-label" style={{ fontSize: '10px' }}>Resulting Branch Key</label>
+                            <input 
+                              type="text"
+                              className="gov-form-input"
+                              style={{ fontSize: '11px', padding: '4px 8px', fontFamily: 'monospace' }}
+                              placeholder="branch_verify"
+                              value={opt.nextBranch || ''}
+                              onChange={(e) => handleUpdateDecisionOption(idx, optIdx, 'nextBranch', e.target.value)}
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                          <div>
+                            <label className="gov-form-label" style={{ fontSize: '10px' }}>Consequence Description (Instructor/AAR)</label>
+                            <input 
+                              type="text"
+                              className="gov-form-input"
+                              style={{ fontSize: '11px', padding: '4px 8px' }}
+                              placeholder="e.g. Ground scouts halt in defilade; radar clarifies contact"
+                              value={opt.consequence?.description || ''}
+                              onChange={(e) => handleUpdateDecisionOption(idx, optIdx, 'consequence_desc', e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className="gov-form-label" style={{ fontSize: '10px' }}>Difficulty Impact</label>
+                            <select
+                              className="gov-form-select"
+                              style={{ fontSize: '11px', padding: '4px 8px' }}
+                              value={opt.consequence?.difficultyChange || 'none'}
+                              onChange={(e) => handleUpdateDecisionOption(idx, optIdx, 'consequence_difficulty', e.target.value)}
+                            >
+                              <option value="none">Neutral (No Change)</option>
+                              <option value="decrease">Decrease (Clearer Fog)</option>
+                              <option value="increase">Increase (Higher Friction)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="gov-form-label" style={{ fontSize: '10px' }}>Comms Impact</label>
+                            <input 
+                              type="text"
+                              className="gov-form-input"
+                              style={{ fontSize: '11px', padding: '4px 8px' }}
+                              placeholder="e.g. Normal / VHF Jammed"
+                              value={opt.consequence?.communicationConditions || 'Normal'}
+                              onChange={(e) => handleUpdateDecisionOption(idx, optIdx, 'consequence_comms', e.target.value)}
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="gov-form-label" style={{ fontSize: '10px' }}>Operational Outcome (AAR Debrief)</label>
+                          <input 
+                            type="text"
+                            className="gov-form-input"
+                            style={{ fontSize: '11px', padding: '4px 8px' }}
+                            placeholder="e.g. Ambush bypassed, 100% force preservation"
+                            value={opt.consequence?.outcome || ''}
+                            onChange={(e) => handleUpdateDecisionOption(idx, optIdx, 'consequence_outcome', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -472,13 +744,30 @@ export const ScenarioConfig = ({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
                 {events.map((ev, i) => (
                   <div key={ev.id} style={{ backgroundColor: '#F8FAFC', border: '1px solid #CBD5E1', padding: '12px', fontSize: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: 'var(--color-primary-navy)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: 'var(--color-primary-navy)', alignItems: 'center' }}>
                       <span>[{ev.time}] #{i + 1}: {ev.title}</span>
-                      <span style={{ textTransform: 'uppercase', color: ev.deliveryBehavior === 'dropped' ? '#DC2626' : ev.deliveryBehavior === 'delayed' ? '#D97706' : 'var(--color-primary-navy)' }}>
-                        {ev.deliveryBehavior} ({ev.intendedRecipient})
-                      </span>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        {ev.branch && (
+                          <span style={{ fontSize: '10px', background: '#DBEAFE', color: '#1E40AF', padding: '1px 6px', borderRadius: '2px', fontFamily: 'monospace' }}>
+                            Branch: {ev.branch}
+                          </span>
+                        )}
+                        <span style={{ textTransform: 'uppercase', color: ev.deliveryBehavior === 'dropped' ? '#DC2626' : ev.deliveryBehavior === 'delayed' ? '#D97706' : 'var(--color-primary-navy)' }}>
+                          {ev.deliveryBehavior} ({ev.intendedRecipient})
+                        </span>
+                      </div>
                     </div>
                     <div style={{ color: '#334155', marginTop: '4px' }}>{ev.content}</div>
+                    {(ev.type === 'DECISION_REQUIRED' || ev.deliveryBehavior === 'decision_point') && ev.decisionOptions && (
+                      <div style={{ marginTop: '8px', padding: '8px', background: '#EFF6FF', border: '1px solid #BFDBFE', fontSize: '11px' }}>
+                        <div style={{ fontWeight: 'bold', color: '#1E40AF', marginBottom: '4px' }}>Configured Branch Options:</div>
+                        {ev.decisionOptions.map((opt, oIdx) => (
+                          <div key={oIdx} style={{ color: '#1E3A8A', margin: '2px 0' }}>
+                            • <strong>{typeof opt === 'object' ? opt.label : opt}</strong> &rarr; Branch: <code style={{ background: '#DBEAFE', padding: '0 4px' }}>{opt.nextBranch || 'default'}</code> ({opt.consequence?.description || 'No description'})
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
