@@ -58,7 +58,7 @@ export const TopUtilityBar = ({
         <div className="gov-utility-left">
           <div className="gov-flag-badge">
             <IndianFlag width={22} height={14} />
-            <span>{t('gov_india', 'Government of India (Training Prototype)')}</span>
+            <span>{t('gov_india', 'Government of India')}</span>
           </div>
           <span style={{ opacity: 0.3 }}>|</span>
           <div className="gov-utility-item">

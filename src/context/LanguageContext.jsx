@@ -4,7 +4,7 @@ export const LanguageContext = createContext();
 
 export const HINDI_DICTIONARY = {
   // Utility Bar & Header
-  'gov_india': 'भारत सरकार | संचार लचीलापन मंच (प्रशिक्षण प्रोटोटाइप)',
+  'gov_india': 'भारत सरकार',
   'comm_resilience_platform': 'संचार लचीलापन मंच',
   'high_contrast': 'उच्च कंट्रास्ट',
   'standard_mode': 'मानक मोड',
