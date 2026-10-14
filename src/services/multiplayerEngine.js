@@ -474,10 +474,20 @@ class MultiplayerEngine {
     if (typeof window === 'undefined' || typeof WebSocket === 'undefined') return;
     if (this.ws && this.currentWsCode === sessionCode && this.ws.readyState === WebSocket.OPEN) return;
 
-    this.currentWsCode = sessionCode;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname || 'localhost';
-    const wsUrl = `${protocol}//${host}:4000/ws`;
+    let wsUrl;
+    const backendUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_BACKEND_URL
+      ? import.meta.env.VITE_BACKEND_URL
+      : null;
+
+    if (backendUrl) {
+      const cleanUrl = backendUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const wsProto = backendUrl.startsWith('https:') ? 'wss:' : 'ws:';
+      wsUrl = `${wsProto}//${cleanUrl}/ws`;
+    } else {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.hostname || 'localhost';
+      wsUrl = `${protocol}//${host}:4000/ws`;
+    }
 
     try {
       this.ws = new WebSocket(wsUrl);
