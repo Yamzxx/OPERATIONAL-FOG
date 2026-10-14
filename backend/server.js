@@ -40,14 +40,22 @@ app.use(cors({
 app.use(express.json());
 app.use(authenticateUser);
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'db',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: process.env.DB_NAME || 'op_fog_db',
-  user: process.env.DB_USER || 'op_fog_user',
-  password: process.env.DB_PASSWORD || 'op_fog_password',
-  connectionTimeoutMillis: 5000
-});
+const poolConfig = process.env.DATABASE_URL
+  ? {
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
+      connectionTimeoutMillis: 10000
+    }
+  : {
+      host: process.env.DB_HOST || 'db',
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      database: process.env.DB_NAME || 'op_fog_db',
+      user: process.env.DB_USER || 'op_fog_user',
+      password: process.env.DB_PASSWORD || 'op_fog_password',
+      connectionTimeoutMillis: 5000
+    };
+
+const pool = new Pool(poolConfig);
 
 // DB-based identity resolution — enriches req.user with dbRole and verified flag.
 // Runs after authenticateUser so every route sees an authoritative role.
