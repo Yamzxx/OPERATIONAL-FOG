@@ -67,6 +67,21 @@ async function queryDB(text, params) {
   return res;
 }
 
+// Root route - displays API information and service status
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'ONLINE',
+    service: 'Operational Fog Authoritative Backend API',
+    endpoints: {
+      health: '/api/health',
+      scenarios: '/api/scenarios',
+      sessions: '/api/sessions',
+      websocket: '/ws'
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
 
 // -------------------------------------------------------------
 // 1. HEALTH & SYSTEM CHECK
