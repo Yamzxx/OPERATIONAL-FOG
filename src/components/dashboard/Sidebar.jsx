@@ -64,7 +64,7 @@ export const Sidebar = ({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
-          <NationalEmblem height={collapsed ? 32 : 38} />
+          <NationalEmblem height={collapsed ? 32 : 38} className="gov-emblem-on-dark" />
           {!collapsed && (
             <div>
               <div style={{ fontFamily: 'var(--font-family-serif)', fontWeight: '800', fontSize: '15px', color: '#FFF', letterSpacing: '0.5px' }}>

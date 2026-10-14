@@ -1,6 +1,6 @@
 import React from 'react';
 import { NationalEmblem, IndianFlag } from './EmblemAndFlag';
-import { ShieldAlert, Mail, Phone, MapPin, ExternalLink } from 'lucide-react';
+import { ShieldAlert, Mail, Phone, MapPin } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 
 export const Footer = ({ onOpenDisclaimerModal }) => {
@@ -21,7 +21,7 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
           {/* Brand Column */}
           <div className="gov-footer-brand">
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <NationalEmblem height={48} />
+              <NationalEmblem height={48} className="gov-emblem-on-dark" />
               <div>
                 <div className="gov-footer-title">OPERATIONAL FOG</div>
                 <div style={{ fontSize: '11px', color: '#94A3B8' }}>{t('comm_resilience_platform', 'Communication Resilience Platform')}</div>
@@ -52,7 +52,7 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
               <li><a href="#participant">{t('participant_workspace', 'Participant Workspace')}</a></li>
               <li><a href="#aar">{t('after_action_review', 'After-Action Review')}</a></li>
               <li><a href="#docs">{t('training_docs', 'Platform Manual & SOPs')}</a></li>
-              <li><a href="#api">API & Scenario Specs</a></li>
+              <li><a href="#api">{t('footer_api_specs', 'API & Scenario Specs')}</a></li>
             </ul>
           </div>
 
@@ -62,15 +62,15 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
             <div style={{ fontSize: '13px', color: '#CBD5E1', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Phone size={14} style={{ color: 'var(--color-gold-accent)' }} />
-                <span>Helpline: +91 (011) 2301-FOGS</span>
+                <span>{t('footer_helpline', 'Helpline: +91 (011) 2301-FOGS')}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Mail size={14} style={{ color: 'var(--color-gold-accent)' }} />
-                <span>Email: support@operationalfog.internal</span>
+                <span>{t('footer_email', 'Email: support@operationalfog.internal')}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
                 <MapPin size={14} style={{ color: 'var(--color-gold-accent)', marginTop: '3px' }} />
-                <span>National Defence Simulation Laboratory, New Delhi 110001</span>
+                <span>{t('footer_address', 'National Defence Simulation Laboratory, New Delhi 110001')}</span>
               </div>
             </div>
           </div>
@@ -83,17 +83,16 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
           </div>
           
           <div style={{ display: 'flex', gap: '16px' }}>
-            <a href="#privacy" onClick={(e) => e.preventDefault()}>Privacy Policy</a>
+            <a href="#privacy" onClick={(e) => e.preventDefault()}>{t('footer_privacy', 'Privacy Policy')}</a>
             <span>|</span>
-            <a href="#terms" onClick={(e) => e.preventDefault()}>Terms of Service</a>
+            <a href="#terms" onClick={(e) => e.preventDefault()}>{t('footer_terms', 'Terms of Service')}</a>
             <span>|</span>
-            <a href="#accessibility" onClick={(e) => e.preventDefault()}>Accessibility Statement</a>
+            <a href="#accessibility" onClick={(e) => e.preventDefault()}>{t('footer_accessibility', 'Accessibility Statement')}</a>
             <span>|</span>
-            <a href="#sitemap" onClick={(e) => e.preventDefault()}>Sitemap</a>
+            <a href="#sitemap" onClick={(e) => e.preventDefault()}>{t('footer_sitemap', 'Sitemap')}</a>
           </div>
         </div>
       </div>
     </footer>
   );
 };
-
