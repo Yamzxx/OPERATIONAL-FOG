@@ -9,13 +9,6 @@ export const Footer = ({ onOpenDisclaimerModal }) => {
   return (
     <footer className="gov-footer">
       <div className="gov-container">
-        {/* Prominent Government Style Disclaimer Box */}
-        <div className="gov-disclaimer-box">
-          <ShieldAlert size={20} style={{ color: '#EAB308', flexShrink: 0 }} />
-          <div>
-            <strong>{t('footer_disclaimer_title', 'DISCLAIMER & PROTOTYPE NOTICE:')}</strong> {t('footer_disclaimer_text', 'Independent training prototype. Not an official Government of India service. All scenarios, messages, and telemetry generated within this application are synthetic and intended strictly for educational and operational simulation training.')}
-          </div>
-        </div>
 
         <div className="gov-footer-grid">
           {/* Brand Column */}
