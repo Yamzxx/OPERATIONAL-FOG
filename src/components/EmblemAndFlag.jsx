@@ -1,5 +1,4 @@
-import React from 'react';
-import emblemSvg from '../assets/emblem_of_india.svg';
+import emblemImg from '../assets/emblem_of_india.png';
 
 /**
  * Official State Emblem of India (Lion Capital of Ashoka)
@@ -9,7 +8,7 @@ export const NationalEmblem = ({ height = 60, className = "", style = {} }) => {
 
   return (
     <img 
-      src={emblemSvg || '/assets/emblem_of_india.svg'} 
+      src={emblemImg || '/assets/emblem_of_india.png'} 
       alt="State Emblem of India" 
       height={typeof height === 'number' ? height : undefined}
       className={`gov-emblem-svg ${className}`}

@@ -279,12 +279,13 @@ button {
 .gov-emblem-flag-group {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  gap: 14px;
   flex-shrink: 0;
 }
 
 .gov-emblem-svg {
-  height: 60px;
+  height: 62px;
   width: auto;
   object-fit: contain;
   flex-shrink: 0;
@@ -294,7 +295,8 @@ button {
 .gov-flag-svg {
   flex-shrink: 0;
   display: block;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  border-radius: 2px;
 }
 
 .gov-header-separator {
