@@ -150,15 +150,13 @@ body[data-font-scale="lg"],
 .font-scale-lg .gov-form-input,
 .font-scale-lg .gov-form-select { font-size: 16px; }
 
-/* Dashboard Content Scaling */
+/* Dashboard Content Scaling — font-size only; do NOT use zoom/transform (would scale the entire viewport) */
 .font-scale-sm .gov-dashboard-shell {
   font-size: 13px;
-  zoom: 0.92;
 }
 
 .font-scale-lg .gov-dashboard-shell {
   font-size: 16px;
-  zoom: 1.1;
 }
 
 * {
@@ -289,6 +287,11 @@ button {
   object-fit: contain;
   flex-shrink: 0;
   display: block;
+}
+
+/* Use on dark backgrounds so the SVG emblem (default black fill) becomes white */
+.gov-emblem-on-dark {
+  filter: brightness(0) invert(1);
 }
 
 .gov-flag-svg {

@@ -1,5 +1,8 @@
 import React from 'react';
-import emblemSvg from '../assets/emblem_of_india.svg';
+
+// The emblem SVG is served from the public folder (/public/assets/emblem_of_india.svg).
+// Using the public path directly avoids Vite asset-import resolution issues in dev mode.
+const EMBLEM_SRC = '/assets/emblem_of_india.png';
 
 /**
  * Official State Emblem of India (Lion Capital of Ashoka)
@@ -8,18 +11,18 @@ export const NationalEmblem = ({ height = 60, className = "", style = {} }) => {
   const heightStyle = typeof height === 'number' ? `${height}px` : height;
 
   return (
-    <img 
-      src={emblemSvg || '/assets/emblem_of_india.svg'} 
-      alt="State Emblem of India" 
+    <img
+      src={EMBLEM_SRC}
+      alt="State Emblem of India"
       height={typeof height === 'number' ? height : undefined}
       className={`gov-emblem-svg ${className}`}
-      style={{ 
-        height: heightStyle, 
-        width: 'auto', 
-        objectFit: 'contain', 
+      style={{
+        height: heightStyle,
+        width: 'auto',
+        objectFit: 'contain',
         display: 'inline-block',
         flexShrink: 0,
-        ...style 
+        ...style
       }}
       loading="eager"
     />
@@ -31,17 +34,17 @@ export const NationalEmblem = ({ height = 60, className = "", style = {} }) => {
  * Standard official ratio 3:2 with 24-spoke Ashoka Chakra
  */
 export const IndianFlag = ({ width = 36, height = 24, className = "", style = {} }) => (
-  <svg 
-    width={width} 
-    height={height} 
-    viewBox="0 0 300 200" 
+  <svg
+    width={width}
+    height={height}
+    viewBox="0 0 300 200"
     className={`gov-flag-svg ${className}`}
-    style={{ 
-      border: '1px solid rgba(0,0,0,0.18)', 
-      borderRadius: '1px', 
-      flexShrink: 0, 
+    style={{
+      border: '1px solid rgba(0,0,0,0.18)',
+      borderRadius: '1px',
+      flexShrink: 0,
       display: 'inline-block',
-      ...style 
+      ...style
     }}
     aria-label="Indian National Flag"
   >
