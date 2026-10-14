@@ -1,11 +1,11 @@
-services:
-  # 1. PostgreSQL Database Service
-  - type: pg
-    name: operational-fog-db
+databases:
+  - name: operational-fog-db
+    databaseName: op_fog_db
+    user: op_fog_user
     plan: free
-    ipAllowList: [] # Allows access from Render services
 
-  # 2. Node.js Express API & WebSocket Backend
+services:
+  # 1. Node.js Express API & WebSocket Backend
   - type: web
     name: operational-fog-backend
     runtime: node
@@ -23,7 +23,7 @@ services:
       - key: PORT
         value: 10000
 
-  # 3. React Vite Static Site Frontend
+  # 2. React Vite Static Site Frontend
   - type: web
     name: operational-fog-frontend
     runtime: static
@@ -41,4 +41,3 @@ services:
           type: web
           name: operational-fog-backend
           property: host
-          # Render automatically configures this, or you can paste the https:// URL
